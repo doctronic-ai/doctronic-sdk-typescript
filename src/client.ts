@@ -24,7 +24,7 @@ import {
 import { ChatStream } from './streaming.js';
 import { ScopedUsersResource, UsersResource } from './users.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 export const BASE_URLS = {
   staging: 'https://staging-partners.doctronic.ai/api/v1',
