@@ -33,6 +33,16 @@ describe('construction', () => {
     expect(client.baseUrl).toBe('http://127.0.0.1:4010/api/v1');
   });
 
+  it('trims every trailing slash from baseUrl, quickly', () => {
+    const make = (baseUrl: string) => new Doctronic({ apiToken: TEST_TOKEN, baseUrl }).baseUrl;
+    expect(make('http://127.0.0.1:4010/api/v1///')).toBe('http://127.0.0.1:4010/api/v1');
+    expect(make('http://127.0.0.1:4010/api/v1')).toBe('http://127.0.0.1:4010/api/v1');
+    expect(make('http://127.0.0.1:4010/a//b/')).toBe('http://127.0.0.1:4010/a//b');
+    const start = performance.now();
+    expect(make(`http://127.0.0.1:4010${'/'.repeat(100_000)}x`)).toMatch(/x$/);
+    expect(performance.now() - start).toBeLessThan(1_000);
+  });
+
   it('reads DOCTRONIC_API_TOKEN and DOCTRONIC_ENVIRONMENT', async () => {
     vi.stubEnv('DOCTRONIC_API_TOKEN', 'env-token-not-real');
     vi.stubEnv('DOCTRONIC_ENVIRONMENT', 'production');

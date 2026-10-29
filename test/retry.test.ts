@@ -90,6 +90,38 @@ describe('shouldRetry', () => {
     expect(shouldRetry(read, status(409))).toBe(false);
   });
 
+  describe('409 codes the contract marks retryable', () => {
+    const MISMATCH = 'error.idempotency.payload_mismatch';
+    const CONCURRENT = 'error.idempotency.concurrent_request';
+    const SLOT = 'error.appointments.slot_unavailable';
+    const documented = { ...scheduled, conflictCodes: [SLOT, MISMATCH, CONCURRENT] };
+    const listed: OperationSpec = { ...documented, retryableConflictCodes: [CONCURRENT] };
+
+    it('retries a documented code only when the contract lists it', () => {
+      expect(shouldRetry(listed, status(409, CONCURRENT))).toBe(true);
+      expect(shouldRetry(listed, status(409, MISMATCH))).toBe(false);
+      expect(shouldRetry(listed, status(409, SLOT))).toBe(false);
+    });
+
+    it('still retries a 409 without a code, or with a code the contract does not document', () => {
+      expect(shouldRetry(listed, status(409))).toBe(true);
+      expect(shouldRetry(listed, status(409, 'error.idempotency.something_new'))).toBe(true);
+    });
+
+    it('treats every documented code as final when the contract has no list', () => {
+      expect(shouldRetry(documented, status(409, CONCURRENT))).toBe(false);
+      expect(shouldRetry(documented, status(409, MISMATCH))).toBe(false);
+      expect(shouldRetry(documented, status(409))).toBe(true);
+    });
+
+    it('never retries a 409 for a read or an unkeyed mutation, listed or not', () => {
+      expect(
+        shouldRetry({ ...read, retryableConflictCodes: [CONCURRENT] }, status(409, CONCURRENT)),
+      ).toBe(false);
+      expect(shouldRetry({ ...listed, idempotent: false }, status(409, CONCURRENT))).toBe(false);
+    });
+  });
+
   it('never retries other 4xx', () => {
     for (const s of [400, 401, 403, 404, 422]) {
       expect(shouldRetry(read, status(s))).toBe(false);

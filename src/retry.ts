@@ -28,9 +28,12 @@ export type AttemptOutcome =
  * - Network failures and timeouts are retried for reads and idempotent mutations. For a mutation
  *   the outcome is unknown, so it's resent with the same key and body.
  * - `429` and `503` are retried for reads and idempotent mutations.
- * - `409` is retried only for an idempotent mutation, and only when its code isn't one of the
- *   state conflicts the contract documents for that operation. What's left is the idempotency
- *   conflict, which the docs say to wait out and retry.
+ * - `409` is retried only for an idempotent mutation, and only when its code isn't one the
+ *   contract documents for that operation, or the contract lists it in
+ *   `x-doctronic-retryable-codes` as safe to retry with the same key. A documented code that isn't
+ *   listed is a state conflict, or an idempotency error that a retry can't fix, such as a reused
+ *   key with a different body. Without the list, every documented code is final, and what's left
+ *   is the idempotency conflict, which the docs say to wait out and retry.
  * - Other `5xx` are retried for reads only, unless the contract documents that status for the
  *   operation as a definitive result, like `500` for an artifact whose generation failed.
  */
@@ -43,7 +46,9 @@ export function shouldRetry(operation: OperationSpec, outcome: AttemptOutcome): 
   const { status, code } = outcome;
   if (status === 429 || status === 503) return true;
   if (status === 409) {
-    return operation.idempotent && (code === null || !operation.conflictCodes.includes(code));
+    if (!operation.idempotent) return false;
+    if (code === null || operation.retryableConflictCodes?.includes(code)) return true;
+    return !operation.conflictCodes.includes(code);
   }
   if (status >= 500) return safeRead && !operation.statuses.includes(status);
   return false;

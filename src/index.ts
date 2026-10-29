@@ -1,9 +1,12 @@
+// Classes are exported as values, never with `export type`: tsup's declaration bundler drops the
+// `type` modifier, so a type-only class export would compile in a consumer and fail at runtime.
+// scripts/check-package.mjs compares the published declarations with the runtime exports.
 export {
+  APIPromise,
   BASE_URLS,
   Doctronic,
   UserScopedClient,
   VERSION,
-  type APIPromise,
   type APIResponse,
   type ClientOptions,
   type Environment,
@@ -63,55 +66,55 @@ export {
   type WebhookEvent,
 } from './webhooks.js';
 
-export type { Address, AddressResource, SetAddressParams } from './address.js';
-export type {
-  Appointment,
-  AppointmentPage,
-  AppointmentResult,
-  AppointmentStatus,
+export { AddressResource, type Address, type SetAddressParams } from './address.js';
+export {
   AppointmentsResource,
-  AsapAppointment,
-  AvailableSlots,
-  AvailableSlotsParams,
-  CreateAsapAppointmentParams,
-  CreateScheduledAppointmentParams,
-  ListAppointmentsParams,
-  RescheduleAppointmentParams,
-  ScheduledAppointment,
-  UsState,
+  type Appointment,
+  type AppointmentPage,
+  type AppointmentResult,
+  type AppointmentStatus,
+  type AsapAppointment,
+  type AvailableSlots,
+  type AvailableSlotsParams,
+  type CreateAsapAppointmentParams,
+  type CreateScheduledAppointmentParams,
+  type ListAppointmentsParams,
+  type RescheduleAppointmentParams,
+  type ScheduledAppointment,
+  type UsState,
 } from './appointments.js';
-export type {
-  Artifact,
-  ArtifactType,
+export {
   ArtifactsResource,
-  WaitUntilReadyOptions,
+  type Artifact,
+  type ArtifactType,
+  type WaitUntilReadyOptions,
 } from './artifacts.js';
-export type {
-  Chat,
-  ChatMessage,
-  ChatMessagePage,
-  ChatPage,
+export {
   ChatsResource,
-  CreateChatParams,
-  ListChatMessagesParams,
-  ListChatsParams,
-  StreamChatParams,
+  type Chat,
+  type ChatMessage,
+  type ChatMessagePage,
+  type ChatPage,
+  type CreateChatParams,
+  type ListChatMessagesParams,
+  type ListChatsParams,
+  type StreamChatParams,
 } from './chats.js';
-export type { CoverageResource, SetCoverageParams } from './coverage.js';
-export type {
-  Pharmacy,
+export { CoverageResource, type SetCoverageParams } from './coverage.js';
+export {
   PharmacyResource,
-  PharmacySearchParams,
-  PharmacySearchResults,
   ScopedPharmacyResource,
-  SetPharmacyParams,
+  type Pharmacy,
+  type PharmacySearchParams,
+  type PharmacySearchResults,
+  type SetPharmacyParams,
 } from './pharmacy.js';
-export type {
-  CreateUserParams,
+export {
   ScopedUsersResource,
-  Sex,
-  UpdateUserParams,
-  User,
   UsersResource,
+  type CreateUserParams,
+  type Sex,
+  type UpdateUserParams,
+  type User,
 } from './users.js';
 export type { components, operations as contractOperations, paths } from './generated/schema.js';
