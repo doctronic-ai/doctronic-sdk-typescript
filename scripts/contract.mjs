@@ -17,7 +17,10 @@ export const ORG_TOKEN_SCHEME = 'HTTPBearer';
 /** A response-level extension on `409`: the error codes safe to retry with the same key. */
 export const RETRYABLE_CODES_EXTENSION = 'x-doctronic-retryable-codes';
 
+// The methods the client sends. The filter checks every method a path item can have, since
+// openapi-typescript generates types for all of them.
 const METHODS = ['get', 'put', 'post', 'patch', 'delete'];
+const ALL_METHODS = [...METHODS, 'head', 'options', 'trace'];
 const USER_ID_HEADER = 'x-doctronic-user-id';
 
 export async function loadContract(source) {
@@ -65,12 +68,12 @@ export function sdkContract(contract) {
   const skipped = [];
   for (const [path, rawItem] of Object.entries(contract.paths ?? {})) {
     const item = resolveRef(contract, rawItem);
-    const skip = METHODS.filter(
+    const skip = ALL_METHODS.filter(
       (method) => item[method] && orgRequirements(contract, item[method]).length === 0,
     );
     skipped.push(...skip.map((method) => `${method.toUpperCase()} ${path}`));
     if (skip.length === 0) paths[path] = rawItem;
-    else if (METHODS.some((method) => item[method] && !skip.includes(method))) {
+    else if (ALL_METHODS.some((method) => item[method] && !skip.includes(method))) {
       paths[path] = Object.fromEntries(Object.entries(item).filter(([key]) => !skip.includes(key)));
     }
   }

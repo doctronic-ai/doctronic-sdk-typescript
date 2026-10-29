@@ -41,11 +41,16 @@ function withSessionOperations(contract: Contract): Json {
   next.paths['/session/refresh/'] = {
     post: { security: [{ SessionToken: [] }], responses: { '200': response } },
   };
-  // A path where only one method takes the org token.
+  // A path where only some methods take the org token, including methods the client never sends.
   next.paths['/chats/'].delete = {
     security: [{ SessionToken: [] }],
     responses: { '204': { description: 'Deleted' } },
   };
+  next.paths['/chats/'].head = {
+    security: [{ SessionToken: [] }],
+    responses: { '200': { description: 'OK' } },
+  };
+  next.paths['/chats/'].options = { security: [], responses: { '204': { description: 'OK' } } };
   // An org operation that also accepts the session token keeps its org facts.
   const create = next.paths['/chats/'].post as Json;
   create.security = [...(create.security as unknown[]), { SessionToken: [] }];
@@ -68,7 +73,13 @@ describe('the pinned contract', () => {
 describe('operations without the organization token', () => {
   it('are skipped', () => {
     const { contract, skipped } = sdkContract(withSessionOperations(pinned));
-    expect(skipped).toEqual(['DELETE /chats/', 'GET /session/config/', 'POST /session/refresh/']);
+    expect(skipped).toEqual([
+      'DELETE /chats/',
+      'HEAD /chats/',
+      'OPTIONS /chats/',
+      'GET /session/config/',
+      'POST /session/refresh/',
+    ]);
     const paths = contract.paths as Json;
     expect(paths['/session/config/']).toBeUndefined();
     expect(paths['/session/refresh/']).toBeUndefined();

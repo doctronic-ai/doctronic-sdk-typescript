@@ -55,11 +55,13 @@ function run(command, args, options = {}) {
   });
 }
 
-// `--ignore-scripts` keeps lifecycle output out of the JSON; the build has already run.
+// The build has already run, so `--ignore-scripts` skips `prepare`. npm 10 runs it anyway and its
+// output lands on stdout ahead of the JSON, so the JSON is read from its first line, `[`.
 function pack(args) {
-  const [result] = JSON.parse(
-    run(npm, ['pack', '--json', '--ignore-scripts', ...args], { cwd: root }),
-  );
+  const stdout = run(npm, ['pack', '--json', '--ignore-scripts', ...args], { cwd: root });
+  const start = stdout.search(/^\[$/m);
+  if (start === -1) throw new Error(`npm pack printed no JSON:\n${stdout}`);
+  const [result] = JSON.parse(stdout.slice(start));
   return result;
 }
 
