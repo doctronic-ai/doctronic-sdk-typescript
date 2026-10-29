@@ -4,13 +4,14 @@
 //   export DOCTRONIC_API_TOKEN="replace-with-your-staging-token"
 //   npx tsx examples/quickstart.ts
 //
-// The client targets staging by default. Set DOCTRONIC_API_URL to use another base URL.
+// It uses top-level await, so it runs as an ES module (this package has "type": "module").
+// The client targets staging by default. To use another URL, pass `baseUrl` to `new Doctronic()`.
 
 import { randomUUID } from 'node:crypto';
 
 import { Doctronic, isKnownChatStreamEvent } from '@doctronic-ai/sdk';
 
-const client = new Doctronic({ baseUrl: process.env.DOCTRONIC_API_URL });
+const client = new Doctronic(); // Reads DOCTRONIC_API_TOKEN.
 
 // 1. Create a user. The SDK sends an Idempotency-Key and reuses it if it retries.
 // Email and phone number are unique per user, so each run uses a fresh email and no phone number.

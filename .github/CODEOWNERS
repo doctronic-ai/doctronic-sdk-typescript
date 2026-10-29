@@ -1,0 +1,3 @@
+# Requests a review from the maintainers on every pull request. The main ruleset decides whether
+# a code owner's approval is required.
+* @johndockery @sam-silv
