@@ -1,118 +1,31 @@
 #!/usr/bin/env node
 // Regenerates src/generated/ from the Doctronic API contract.
 //
-//   npm run generate                              # the published contract
+//   npm run generate                              # the pinned copy, openapi/doctronic-v1.json
 //   npm run generate -- --contract <path|url>     # any copy of the contract
 //
 // Output depends only on the contract's content, never on where it was read from, so CI can
-// regenerate from the published contract and diff against the committed files.
+// regenerate from the pinned copy and diff against the committed files.
+//
+// Only operations that take the organization's API token are generated. Others, such as
+// browser-only operations, are listed and skipped.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import openapiTS, { astToString } from 'openapi-typescript';
 
+import { describeOperations, loadContract, PINNED_CONTRACT, sdkContract } from './contract.mjs';
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_CONTRACT = 'https://docs.doctronic.ai/openapi/doctronic-v1.json';
 const OUT_DIR = resolve(root, 'src/generated');
-const METHODS = ['get', 'put', 'post', 'patch', 'delete'];
-const USER_ID_HEADER = 'x-doctronic-user-id';
 
 const BANNER = `/**
  * Generated from the Doctronic API contract by \`npm run generate\`. Do not edit by hand.
  */
 `;
-
-async function loadContract(source) {
-  const text = /^https?:\/\//.test(source)
-    ? await fetch(source).then((response) => {
-        if (!response.ok) throw new Error(`GET ${source}: HTTP ${response.status}`);
-        return response.text();
-      })
-    : await readFile(resolve(source), 'utf8');
-  const contract = JSON.parse(text);
-  if (typeof contract.openapi !== 'string' || !contract.openapi.startsWith('3.')) {
-    throw new Error(`${source} is not an OpenAPI 3 document`);
-  }
-  return contract;
-}
-
-function resolveRef(contract, value) {
-  if (!value || typeof value.$ref !== 'string') return value;
-  const pointer = value.$ref.replace(/^#\//, '').split('/');
-  return resolveRef(
-    contract,
-    pointer.reduce((node, key) => node?.[key.replace(/~1/g, '/').replace(/~0/g, '~')], contract),
-  );
-}
-
-function errorCodes(contract, response) {
-  const media = resolveRef(contract, response)?.content?.['application/json'];
-  if (!media) return [];
-  const examples = [media.example, ...Object.values(media.examples ?? {}).map((e) => e?.value)];
-  return examples.map((example) => example?.code).filter((code) => typeof code === 'string');
-}
-
-// Whether the success envelope's schema requires `data`. `202` means "not ready" and is skipped.
-function successDataRequired(contract, responses) {
-  const status = Object.keys(responses)
-    .filter((code) => /^2\d\d$/.test(code) && code !== '202')
-    .sort()[0];
-  if (!status) return false;
-  const schema = resolveRef(
-    contract,
-    resolveRef(contract, responses[status])?.content?.['application/json']?.schema,
-  );
-  return Array.isArray(schema?.required) && schema.required.includes('data');
-}
-
-// The runtime facts the client needs about each operation. Types alone can't carry these.
-function describeOperations(contract) {
-  const userIdSchemes = new Set(
-    Object.entries(contract.components?.securitySchemes ?? {})
-      .filter(([, scheme]) => {
-        const resolved = resolveRef(contract, scheme);
-        return resolved.in === 'header' && resolved.name.toLowerCase() === USER_ID_HEADER;
-      })
-      .map(([name]) => name),
-  );
-
-  const operations = [];
-  for (const [path, rawItem] of Object.entries(contract.paths ?? {})) {
-    const item = resolveRef(contract, rawItem);
-    for (const method of METHODS) {
-      const operation = item[method];
-      if (!operation) continue;
-      const parameters = [...(item.parameters ?? []), ...(operation.parameters ?? [])].map((p) =>
-        resolveRef(contract, p),
-      );
-      const security = operation.security ?? contract.security ?? [];
-      const responses = operation.responses ?? {};
-      operations.push({
-        key: `${method.toUpperCase()} ${path}`,
-        method: method.toUpperCase(),
-        path,
-        idempotent: parameters.some(
-          (p) => p.in === 'header' && p.name.toLowerCase() === 'idempotency-key',
-        ),
-        userScoped: security.some((requirement) =>
-          Object.keys(requirement).some((name) => userIdSchemes.has(name)),
-        ),
-        stream: Object.values(responses).some(
-          (response) => resolveRef(contract, response)?.content?.['text/event-stream'],
-        ),
-        statuses: Object.keys(responses)
-          .filter((status) => /^\d{3}$/.test(status))
-          .map(Number),
-        conflictCodes: responses['409'] ? errorCodes(contract, responses['409']) : [],
-        dataRequired: successDataRequired(contract, responses),
-      });
-    }
-  }
-  return operations;
-}
 
 function renderOperations(operations) {
   const entries = operations.map((op) => {
@@ -138,6 +51,11 @@ export interface OperationSpec {
   readonly statuses: readonly number[];
   /** Error codes the contract documents for the operation's \`409\` response. */
   readonly conflictCodes: readonly string[];
+  /**
+   * The \`409\` codes the contract marks safe to retry with the same idempotency key
+   * (\`x-doctronic-retryable-codes\`). Absent when the contract doesn't say.
+   */
+  readonly retryableConflictCodes?: readonly string[];
   /** The success envelope's schema requires \`data\`. */
   readonly dataRequired: boolean;
 }
@@ -152,8 +70,8 @@ export type OperationKey = keyof typeof operations;
 
 async function main() {
   const { values } = parseArgs({ options: { contract: { type: 'string' } } });
-  const source = values.contract ?? DEFAULT_CONTRACT;
-  const contract = await loadContract(source);
+  const source = values.contract ?? relative(process.cwd(), PINNED_CONTRACT);
+  const { contract, skipped } = sdkContract(await loadContract(source));
 
   const ast = await openapiTS(contract, { defaultNonNullable: false, silent: true });
   const operations = describeOperations(contract);
@@ -166,6 +84,11 @@ async function main() {
   console.log(
     `Generated src/generated/ from ${source}: ${operations.length} operations, ${idempotent} idempotent.`,
   );
+  if (skipped.length) {
+    console.log(
+      `Skipped ${skipped.length} that don't take the organization's API token: ${skipped.join(', ')}.`,
+    );
+  }
 }
 
 main().catch((error) => {

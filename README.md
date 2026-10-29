@@ -233,6 +233,9 @@ await patient.appointments.createScheduled(body, { idempotencyKey: bookingId });
 | Other `5xx`                                                 | Retried, unless the contract documents it for the operation, like `500` on an artifact | Not retried          | Never            |
 | Other `4xx`                                                 | Not retried                                                                            | Not retried          | Never            |
 
+A `409` code that the contract documents for the operation is a state conflict and isn't retried,
+unless the contract lists it in `x-doctronic-retryable-codes` as safe to retry with the same key.
+
 Retries back off exponentially with jitter from 0.5 s, and wait for `Retry-After` when the response
 carries one. A `Retry-After` over 60 s ends the call with its error instead. A mutation without an
 idempotency key is never retried once it may have reached the server.
@@ -344,18 +347,22 @@ npm test
 npm run build
 ```
 
-`npm run generate` reads the published contract,
+`npm run generate` reads `openapi/doctronic-v1.json`, a pinned copy of the published contract,
 `https://docs.doctronic.ai/openapi/doctronic-v1.json`. Pass `--contract <path|url>` to read another
-copy, such as a local file:
+copy, such as the published one:
 
 ```bash
-npm run generate -- --contract ./doctronic-v1.json
+npm run generate -- --contract https://docs.doctronic.ai/openapi/doctronic-v1.json
 ```
 
 It writes `src/generated/schema.ts` (types, from `openapi-typescript`) and
 `src/generated/operations.ts` (the runtime facts the client needs per operation: idempotency,
-user scope, streaming, documented statuses). Both are committed. CI regenerates them from the public
-contract and fails on any difference.
+user scope, streaming, documented statuses and conflict codes). Both are committed. It skips
+operations that don't take the organization's API token, such as browser-only ones, and lists them.
+
+`npm run check:package` (after `npm run build`) checks the tarball's file list, installs it into
+the consumer in `test/consumer/`, type-checks that consumer under NodeNext, bundler, and node10
+resolution, and checks that the declarations and the runtime export the same values.
 
 Tests run against a local mock server and refuse any other host.
 

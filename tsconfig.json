@@ -19,5 +19,7 @@
       "@doctronic-ai/sdk": ["./src/index.ts"]
     }
   },
-  "include": ["src", "test", "examples", "*.config.ts"]
+  "include": ["src", "test", "examples", "*.config.ts"],
+  // The consumer fixture compiles against the packed tarball. scripts/check-package.mjs checks it.
+  "exclude": ["test/consumer"]
 }

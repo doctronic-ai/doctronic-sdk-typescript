@@ -3,7 +3,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/generated/'] },
+  // test/consumer/ compiles against the packed tarball, in scripts/check-package.mjs.
+  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/generated/', 'test/consumer/'] },
   js.configs.recommended,
   {
     files: ['**/*.ts'],

@@ -48,6 +48,33 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Installs the packed tarball into test/consumer/, type-checks it under each module resolution,
+  # and compares the declared value exports with the runtime ones.
+  package:
+    name: Package works for consumers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Check the package
+        run: npm run check:package
+
   codegen:
     name: Codegen matches the public contract
     runs-on: ubuntu-latest

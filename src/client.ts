@@ -416,7 +416,7 @@ export class Doctronic {
     }
 
     this.environment = environment as Environment;
-    this.baseUrl = (options.baseUrl ?? BASE_URLS[this.environment]).replace(/\/+$/, '');
+    this.baseUrl = trimTrailingSlashes(options.baseUrl ?? BASE_URLS[this.environment]);
     this.#transport = new Transport({
       apiToken,
       baseUrl: this.baseUrl,
@@ -532,6 +532,13 @@ function linkAbort(signal: AbortSignal | undefined, timeoutMs: number) {
       return new APIConnectionError(undefined, { cause });
     },
   };
+}
+
+// A loop rather than /\/+$/, which backtracks quadratically on a long run of slashes.
+function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
 }
 
 function readEnv(name: string): string | undefined {

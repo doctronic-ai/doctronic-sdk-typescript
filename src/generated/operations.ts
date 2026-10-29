@@ -17,6 +17,11 @@ export interface OperationSpec {
   readonly statuses: readonly number[];
   /** Error codes the contract documents for the operation's `409` response. */
   readonly conflictCodes: readonly string[];
+  /**
+   * The `409` codes the contract marks safe to retry with the same idempotency key
+   * (`x-doctronic-retryable-codes`). Absent when the contract doesn't say.
+   */
+  readonly retryableConflictCodes?: readonly string[];
   /** The success envelope's schema requires `data`. */
   readonly dataRequired: boolean;
 }

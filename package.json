@@ -48,6 +48,7 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "check:package": "node scripts/check-package.mjs",
     "prepare": "npm run build"
   },
   "devDependencies": {
