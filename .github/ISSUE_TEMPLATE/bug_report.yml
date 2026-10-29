@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in the SDK doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never post API tokens, webhook secrets, patient data, or PHI in an issue.** Issues are public. Redact request and response bodies, logs, and user IDs, or reproduce the problem in staging with a synthetic patient.
+
+        Report security vulnerabilities [privately](https://github.com/doctronic-ai/doctronic-sdk-typescript/security/advisories/new), not here.
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version
+      description: The `@doctronic-ai/sdk` version, from `npm ls @doctronic-ai/sdk`.
+      placeholder: 0.1.1
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: From `node --version`.
+      placeholder: v22.11.0
+    validations:
+      required: true
+  - type: dropdown
+    id: module-system
+    attributes:
+      label: How do you load the SDK?
+      options:
+        - ES modules (import)
+        - CommonJS (require)
+        - A bundler (name it below)
+        - Other (describe it below)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the error class, its `code`, and its `requestId`. Leave out tokens and patient data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code that shows the problem, with synthetic data only.
+      render: ts
+  - type: checkboxes
+    id: no-sensitive-data
+    attributes:
+      label: Before you submit
+      options:
+        - label: This issue contains no API tokens, webhook secrets, patient data, or PHI.
+          required: true

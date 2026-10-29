@@ -30,6 +30,16 @@
 - The first release published from GitHub Actions through npm trusted publishing, with provenance,
   and with a GitHub Release from this changelog.
 
+### Documentation and metadata
+
+- README: a Safety note about the `guardian` event, the ES module requirement for the quickstart's
+  top-level `await`, `const app = express()` in the webhook example, absolute links that work on
+  npm, a link to the Python SDK, and Versioning, Supported Node versions, and Support sections.
+- The quickstart example no longer reads `DOCTRONIC_API_URL`, which the SDK never read. Pass
+  `baseUrl` to use another URL.
+- `package.json` has `keywords` and `"author": "Doctronic"`.
+- Issue and pull request templates, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `CODEOWNERS`.
+
 ## 0.1.0 (2026-10-28)
 
 First version of `@doctronic-ai/sdk`, generated from the Doctronic API contract (OpenAPI 3.1, 22

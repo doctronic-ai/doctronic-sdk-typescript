@@ -4,7 +4,8 @@ Call the Doctronic API from your Node backend: create users, stream consultation
 appointments, retrieve consultation documents, and verify webhooks.
 
 Requires Node 20 or later; see [Supported Node versions](#supported-node-versions). ESM and
-CommonJS. No runtime dependencies.
+CommonJS. No runtime dependencies. Using Python? See the
+[Doctronic Python SDK](https://github.com/doctronic-ai/doctronic-sdk-python).
 
 ## Install
 
@@ -20,6 +21,9 @@ Stream an assistant message in staging with a synthetic patient. You need a stag
 ```bash
 export DOCTRONIC_API_TOKEN="replace-with-your-staging-token"
 ```
+
+The code uses top-level `await`, so run it as an ES module: a `.mjs` or `.mts` file, or a file in a
+package with `"type": "module"`. In CommonJS, put the calls in an `async` function.
 
 ```ts
 import { randomUUID } from 'node:crypto';
@@ -52,8 +56,11 @@ for await (const event of stream) {
 }
 ```
 
-[`examples/quickstart.ts`](examples/quickstart.ts) is the runnable version. It assembles each
-message and prints every other event.
+[`examples/quickstart.ts`](https://github.com/doctronic-ai/doctronic-sdk-typescript/blob/main/examples/quickstart.ts)
+is the runnable version. It assembles each message and prints every other event.
+
+**Safety:** a turn can emit a `guardian` event that your product must act on. Read
+[Safety](https://docs.doctronic.ai/docs/safety/) before you show the stream to patients.
 
 Run the client on your backend only. The API token authorizes your organization's whole scope,
 so the client refuses to start in a browser unless you pass `dangerouslyAllowBrowser: true`.
@@ -314,6 +321,8 @@ parsed envelope, or throws `WebhookVerificationError`:
 import express from 'express';
 import { isKnownWebhookEvent, verifyWebhook, WebhookVerificationError } from '@doctronic-ai/sdk';
 
+const app = express();
+
 app.post('/webhooks/doctronic', express.raw({ type: 'application/json' }), (req, res) => {
   let event;
   try {
@@ -337,6 +346,22 @@ app.post('/webhooks/doctronic', express.raw({ type: 'application/json' }), (req,
 Typed events: `appointment.waiting_room_ready`, `appointment.practitioner_joined`,
 `appointment.call_ended`, and `artifact.ready`. Any other name arrives with `data: unknown`.
 
+## Versioning
+
+The SDK follows [semantic versioning](https://semver.org). While it's at 0.x:
+
+- A patch release, such as 0.1.1 to 0.1.2, fixes bugs and doesn't break code written for the
+  previous release.
+- A minor release, such as 0.1.x to 0.2.0, can break code: a renamed method, or a type that a
+  contract change narrows. The
+  [CHANGELOG](https://github.com/doctronic-ai/doctronic-sdk-typescript/blob/main/CHANGELOG.md)
+  lists every breaking change.
+
+`npm install` saves a caret range such as `^0.1.1`, which on 0.x accepts patch releases only, so
+you take a minor release when you choose to. The SDK calls version 1 of the API (`/api/v1`), and
+its types come from the published v1 contract. 1.0.0 will mark a stable SDK; after it, breaking
+changes wait for a major release.
+
 ## Supported Node versions
 
 CI tests every even-numbered Node line from 20 up: 20, 22, 24, and 26. `engines` stays `>=20`
@@ -344,40 +369,27 @@ through 0.1.x. Node 20 reached end of life in April 2026, so a later minor relea
 minimum to Node 22; the CHANGELOG says so when it does. A new Node line joins the CI matrix soon
 after its release.
 
+## Support
+
+- **The Doctronic API**: guides, the API reference, errors, and safety requirements are at
+  [docs.doctronic.ai](https://docs.doctronic.ai).
+- **SDK bugs and feature requests**:
+  [open an issue](https://github.com/doctronic-ai/doctronic-sdk-typescript/issues/new/choose)
+  with the SDK and Node versions and the `requestId` of a failed request. **Never post API tokens,
+  webhook secrets, patient data, or PHI.**
+- **Security vulnerabilities**: report them privately through
+  [GitHub's private vulnerability reporting](https://github.com/doctronic-ai/doctronic-sdk-typescript/security/advisories/new),
+  never in a public issue. See
+  [SECURITY.md](https://github.com/doctronic-ai/doctronic-sdk-typescript/blob/main/SECURITY.md).
+
+Fixes, security fixes included, go to the latest 0.x release.
+
 ## Develop
 
-```bash
-npm ci
-npm run generate   # Regenerate src/generated/ from the contract
-npm run lint
-npm run typecheck
-npm test
-npm run build
-```
-
-`npm run generate` reads `openapi/doctronic-v1.json`, a pinned copy of the published contract,
-`https://docs.doctronic.ai/openapi/doctronic-v1.json`. Pass `--contract <path|url>` to read another
-copy, such as the published one:
-
-```bash
-npm run generate -- --contract https://docs.doctronic.ai/openapi/doctronic-v1.json
-```
-
-It writes `src/generated/schema.ts` (types, from `openapi-typescript`) and
-`src/generated/operations.ts` (the runtime facts the client needs per operation: idempotency,
-user scope, streaming, documented statuses and conflict codes). Both are committed. It skips
-operations that don't take the organization's API token, such as browser-only ones, and lists them.
-
-`npm run check:package` (after `npm run build`) checks the tarball's file list, installs it into
-the consumer in `test/consumer/`, type-checks that consumer under NodeNext, bundler, and node10
-resolution, and checks that the declarations and the runtime export the same values.
-
-CI regenerates from the pinned copy and fails on any difference, so it never depends on the
-network. `regenerate.yml` updates the pinned copy when the docs publish a new contract, and daily,
-and opens a pull request; `contract-drift.yml` reports daily when the published contract differs.
-
-Tests run against a local mock server and refuse any other host.
+See [CONTRIBUTING.md](https://github.com/doctronic-ai/doctronic-sdk-typescript/blob/main/CONTRIBUTING.md)
+to build and test the SDK and to regenerate it from the API contract. The code in
+`src/generated/` is generated and never edited by hand.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/doctronic-ai/doctronic-sdk-typescript/blob/main/LICENSE).

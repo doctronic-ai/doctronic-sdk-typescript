@@ -2,6 +2,22 @@
   "name": "@doctronic-ai/sdk",
   "version": "0.1.1",
   "description": "TypeScript SDK for the Doctronic API",
+  "keywords": [
+    "doctronic",
+    "healthcare",
+    "telehealth",
+    "telemedicine",
+    "medical",
+    "ai",
+    "api",
+    "sdk",
+    "client",
+    "typescript",
+    "webhooks",
+    "sse",
+    "streaming"
+  ],
+  "author": "Doctronic",
   "license": "MIT",
   "repository": {
     "type": "git",
