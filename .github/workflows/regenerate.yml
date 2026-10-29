@@ -22,6 +22,12 @@ on:
 
 permissions: {}
 
+# One run at a time, start to finish, so an older run can't overwrite a newer run's pull request. A
+# run that arrives while another waits replaces the waiting one, so the newest contract wins.
+concurrency:
+  group: regenerate
+  cancel-in-progress: false
+
 env:
   CONTRACT_URL: https://docs.doctronic.ai/openapi/doctronic-v1.json
   SYNC_BRANCH: automation/regenerate
@@ -117,9 +123,6 @@ jobs:
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
       checks: ${{ steps.checks.outcome }}
-    concurrency:
-      group: regenerate
-      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -207,7 +210,6 @@ jobs:
           SHA256: ${{ needs.route.outputs.sha256 }}
           DOCS_SHA: ${{ needs.route.outputs.docs-sha }}
           CHANGELOG_URL: ${{ needs.route.outputs.changelog-url }}
-          BREAKING: ${{ needs.route.outputs.breaking }}
           DOCS_RUN_URL: ${{ needs.route.outputs.docs-run-url }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -228,11 +230,6 @@ jobs:
             echo "Triggered by $trigger. [Regenerate run]($RUN_URL)."
             if [ -n "$CHANGELOG_URL" ]; then echo "API changelog: $CHANGELOG_URL"; fi
             echo
-            if [ "$BREAKING" = "true" ]; then
-              echo "> [!CAUTION]"
-              echo "> The docs flagged this contract change as breaking, so this pull request is labeled \`breaking-change\`. Check the SDK's public types and methods, and plan a minor release."
-              echo
-            fi
             if [ "$CHECKS" = "success" ]; then
               echo "Lint, type check, tests, and build passed in the [regenerate run]($RUN_URL)."
             else
@@ -278,9 +275,6 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    concurrency:
-      group: regenerate-pull-request
-      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -358,6 +352,30 @@ jobs:
           mkdir -p "$RUNNER_TEMP/regenerated"
           echo "No changes." > "$RUNNER_TEMP/regenerated/pull-request-body.md"
 
+      # The branch holds every contract change not yet on main, so a breaking change stays flagged
+      # until the pull request merges, or someone removes the label by hand.
+      - name: Decide whether the pull request is breaking
+        id: breaking
+        if: steps.token.outputs.ok == 'true' && needs.regenerate.outputs.changed == 'true'
+        env:
+          BREAKING: ${{ needs.route.outputs.breaking }}
+        run: |
+          labeled="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --base main --state open \
+            --json labels --jq '[.[].labels[].name] | any(. == "breaking-change")')"
+          if [ "$BREAKING" = "true" ] || [ "$labeled" = "true" ]; then
+            echo "breaking=true" >> "$GITHUB_OUTPUT"
+            body="$RUNNER_TEMP/regenerated/pull-request-body.md"
+            {
+              echo "> [!CAUTION]"
+              echo "> The docs flagged a contract change on this branch as breaking, so this pull request is labeled \`breaking-change\`. Check the SDK's public types and methods, and plan a minor release. Remove the label if it no longer applies."
+              echo
+              cat "$body"
+            } > "$body.new"
+            mv "$body.new" "$body"
+          else
+            echo "breaking=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Signed commits are created through the API as the app, so GitHub verifies them, and the
       # app's push and pull request trigger the required checks. With no changes, this deletes the
       # branch, which closes a pull request left open on it.
@@ -378,19 +396,14 @@ jobs:
             openapi/doctronic-v1.json
             src/generated/**
 
+      # Only ever added here. The previous step carries it over from the open pull request.
       - name: Label a breaking change
-        if: steps.pull-request.outputs.pull-request-number != '' && contains(fromJSON('["created", "updated"]'), steps.pull-request.outputs.pull-request-operation)
+        if: steps.breaking.outputs.breaking == 'true' && steps.pull-request.outputs.pull-request-number != ''
         env:
-          BREAKING: ${{ needs.route.outputs.breaking }}
           PULL_REQUEST_NUMBER: ${{ steps.pull-request.outputs.pull-request-number }}
         run: |
-          # Each run rebuilds the branch from main, so a label from an earlier run may no longer apply.
-          if [ "$BREAKING" = "true" ]; then
-            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PULL_REQUEST_NUMBER/labels" \
-              --field 'labels[]=breaking-change' --silent
-          else
-            gh pr edit "$PULL_REQUEST_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label breaking-change || true
-          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PULL_REQUEST_NUMBER/labels" \
+            --field 'labels[]=breaking-change' --silent
 
       - name: Fail the run when the checks failed
         if: needs.regenerate.outputs.checks == 'failure'

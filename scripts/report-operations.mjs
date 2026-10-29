@@ -34,15 +34,16 @@ async function referencedKeys() {
   return keys;
 }
 
+// Every field either side has, so a fact that disappears, like `retryableConflictCodes` when the
+// contract drops `x-doctronic-retryable-codes`, counts as a change too.
 function changedFacts(before, after) {
-  return Object.keys(after)
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
     .filter((field) => field !== 'key')
     .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]))
-    .map(
-      (field) => `\`${field}\` ${JSON.stringify(before[field])} → ${JSON.stringify(after[field])}`,
-    );
+    .map((field) => `\`${field}\` ${show(before[field])} → ${show(after[field])}`);
 }
 
+const show = (value) => (value === undefined ? 'absent' : JSON.stringify(value));
 const list = (items) => items.map((item) => `- ${item}`).join('\n');
 
 async function main() {
@@ -94,8 +95,12 @@ async function main() {
   const summary =
     added.length || removed.length || changed.length
       ? `The SDK covers ${after.operations.size} operations (${before.operations.size} before).`
-      : `The SDK covers ${after.operations.size} operations. None were added, removed, or changed.`;
-  console.log([summary, ...sections].join('\n\n'));
+      : `The SDK covers ${after.operations.size} operations. None were added or removed, and their runtime facts are unchanged.`;
+  // Runtime facts only: request and response types can change without any of the above. The
+  // diff of src/generated/schema.ts shows those.
+  const types =
+    'Request and response types can change too; review `src/generated/schema.ts` in the diff.';
+  console.log([summary, ...sections, types].join('\n\n'));
 }
 
 main().catch((error) => {

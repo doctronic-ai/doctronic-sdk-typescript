@@ -72,13 +72,9 @@ jobs:
             exit 1
           fi
 
-      - name: Check the CHANGELOG has an entry for the version
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          if ! grep -qxE "## ${version//./\\.}( .*)?" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no \"## $version\" entry. Add one before tagging."
-            exit 1
-          fi
+      # The same notes the github-release job publishes, checked before anything is published.
+      - name: Check the CHANGELOG has notes for the version
+        run: node scripts/release-notes.mjs "$(node -p "require('./package.json').version")" > /dev/null
 
       - name: Check the tagged commit is on main
         run: |
@@ -141,18 +137,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
       - name: Write the release notes from the CHANGELOG
         run: |
           version="${GITHUB_REF_NAME#v}"
-          awk -v heading="## $version" '
-            $0 == heading || index($0, heading " ") == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            echo "::error::CHANGELOG.md has no notes under \"## $version\"."
-            exit 1
-          fi
+          node scripts/release-notes.mjs "$version" > "$RUNNER_TEMP/notes.md"
           {
             echo
             echo "Published to npm as [\`@doctronic-ai/sdk@$version\`](https://www.npmjs.com/package/@doctronic-ai/sdk/v/$version)."
