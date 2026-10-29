@@ -1,5 +1,8 @@
-# Publishes @doctronic-ai/sdk to npm when a vX.Y.Z tag is pushed. The job stops unless the tag
-# matches the package.json version and points at a commit on main.
+# Publishes @doctronic-ai/sdk to npm when a vX.Y.Z tag is pushed, then creates the tag's GitHub
+# Release from its CHANGELOG entry. The publish job stops unless the tag matches the package.json
+# version, points at a commit on main, and has a CHANGELOG entry, and unless the tarball holds
+# exactly the expected files. A version with a prerelease part, like 0.2.0-beta.1, is published
+# under the `next` dist-tag and marked as a prerelease on GitHub.
 #
 # Releases require:
 #
@@ -8,12 +11,15 @@
 #    the environment must exist before anyone pushes a `v*` tag.
 # 2. A tag ruleset that limits who can create, move, or delete `v*` tags.
 # 3. An npm trusted publisher for this workflow: GitHub Actions, `doctronic-ai` /
-#    `doctronic-sdk-typescript`, workflow `release.yml`, environment `npm`. npm adds a trusted
-#    publisher from an existing package's settings, so the first version is published by hand. A
-#    new trusted publisher expires unless it publishes within 2 days.
+#    `doctronic-sdk-typescript`, workflow `release.yml`, environment `npm`.
 #
-# 0.1.0 is the version published by hand (requirement 3), so the first tag through this workflow
-# is `v0.1.1`. Don't push `v0.1.0`.
+# 0.1.0 was published by hand, because npm adds a trusted publisher only to a package that already
+# exists, so it has no provenance. Its `v0.1.0` tag and GitHub Release were added afterwards, and
+# that tag's run of this workflow was cancelled. The first version this workflow publishes is
+# 0.1.1.
+#
+# Create the trusted publisher (requirement 3) right before you push the tag: a new trusted
+# publisher expires unless it publishes within 2 days.
 #
 # A tag push runs this file as it is at the tagged commit, so anyone who can push a tag can run a
 # modified copy. The checks below catch mistakes, not attacks. The protection comes from the
@@ -66,6 +72,10 @@ jobs:
             exit 1
           fi
 
+      # The same notes the github-release job publishes, checked before anything is published.
+      - name: Check the CHANGELOG has notes for the version
+        run: node scripts/release-notes.mjs "$(node -p "require('./package.json').version")" > /dev/null
+
       - name: Check the tagged commit is on main
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
@@ -99,5 +109,55 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Runs `npm pack --dry-run --json` and fails on any file outside the expected list, or any
+      # missing one.
+      - name: Check the tarball's file list
+        run: node scripts/check-package.mjs files
+
       - name: Publish
-        run: npm publish --access public
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
+
+  # Separate from the publish job so that job keeps only what publishing needs.
+  github-release:
+    name: Create the GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Write the release notes from the CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/release-notes.mjs "$version" > "$RUNNER_TEMP/notes.md"
+          {
+            echo
+            echo "Published to npm as [\`@doctronic-ai/sdk@$version\`](https://www.npmjs.com/package/@doctronic-ai/sdk/v/$version)."
+          } >> "$RUNNER_TEMP/notes.md"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=()
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$version" --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"

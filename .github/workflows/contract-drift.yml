@@ -1,0 +1,77 @@
+# Reports when the published contract no longer matches the pinned copy in
+# openapi/doctronic-v1.json. The required codegen check reads only the pinned copy, so it can't see
+# this. regenerate.yml opens the pull request that catches up; this run only reports, and isn't a
+# required check.
+
+name: Contract drift
+
+on:
+  schedule:
+    # Daily at 15:47 UTC, after regenerate.yml's daily run.
+    - cron: '47 15 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  CONTRACT_URL: https://docs.doctronic.ai/openapi/doctronic-v1.json
+
+jobs:
+  drift:
+    name: Compare the pinned contract with the published one
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch the published contract
+        run: |
+          curl --fail --silent --show-error --max-time 60 --retry 3 \
+            --header 'accept: application/json' --header 'cache-control: no-cache' \
+            --output "$RUNNER_TEMP/published.json" "$CONTRACT_URL"
+
+      - name: Compare
+        run: |
+          published="$(sha256sum "$RUNNER_TEMP/published.json" | cut -d' ' -f1)"
+          pinned="$(sha256sum openapi/doctronic-v1.json | cut -d' ' -f1)"
+          if [ "$published" = "$pinned" ]; then
+            echo "No drift: the published contract matches openapi/doctronic-v1.json (sha256 \`$pinned\`)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          npm run generate -- --contract "$RUNNER_TEMP/published.json"
+          git add --intent-to-add src/generated
+          {
+            echo "## Contract drift"
+            echo
+            echo "The published contract (sha256 \`$published\`) differs from openapi/doctronic-v1.json (sha256 \`$pinned\`)."
+            echo
+            node scripts/report-operations.mjs openapi/doctronic-v1.json "$RUNNER_TEMP/published.json"
+            echo
+            echo "### Generated code"
+            echo
+            echo '```'
+            git diff --stat -- src/generated
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if git diff --quiet -- src/generated; then
+            echo "::warning::The published contract differs from openapi/doctronic-v1.json, but the generated code doesn't change. Run regenerate.yml to update the pinned copy."
+          else
+            echo "::error::The published contract changes the generated code. Run regenerate.yml, or merge its open pull request."
+            exit 1
+          fi

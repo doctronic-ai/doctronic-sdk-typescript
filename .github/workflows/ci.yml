@@ -20,7 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # Each even-numbered Node line from the `engines` minimum up. See "Supported Node versions" in
+        # the README. The main ruleset requires each of these checks by name.
+        node: [20, 22, 24, 26]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,8 +77,11 @@ jobs:
       - name: Check the package
         run: npm run check:package
 
+  # Deterministic: compares with the committed copy of the contract, never the network.
+  # contract-drift.yml compares that copy with the published contract on a schedule, and
+  # regenerate.yml opens a pull request when the published one changes.
   codegen:
-    name: Codegen matches the public contract
+    name: Codegen matches the pinned contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -94,9 +99,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Pass the URL explicitly so this check never depends on the script's default.
-      - name: Regenerate from the public contract
-        run: npm run generate -- --contract https://docs.doctronic.ai/openapi/doctronic-v1.json
+      - name: Regenerate from the pinned contract
+        run: npm run generate -- --contract openapi/doctronic-v1.json
 
       - name: Fail if the committed output differs
         run: |

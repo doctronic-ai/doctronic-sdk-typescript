@@ -3,7 +3,8 @@
 Call the Doctronic API from your Node backend: create users, stream consultations, book
 appointments, retrieve consultation documents, and verify webhooks.
 
-Requires Node 20 or later. ESM and CommonJS. No runtime dependencies.
+Requires Node 20 or later; see [Supported Node versions](#supported-node-versions). ESM and
+CommonJS. No runtime dependencies.
 
 ## Install
 
@@ -336,6 +337,13 @@ app.post('/webhooks/doctronic', express.raw({ type: 'application/json' }), (req,
 Typed events: `appointment.waiting_room_ready`, `appointment.practitioner_joined`,
 `appointment.call_ended`, and `artifact.ready`. Any other name arrives with `data: unknown`.
 
+## Supported Node versions
+
+CI tests every even-numbered Node line from 20 up: 20, 22, 24, and 26. `engines` stays `>=20`
+through 0.1.x. Node 20 reached end of life in April 2026, so a later minor release may raise the
+minimum to Node 22; the CHANGELOG says so when it does. A new Node line joins the CI matrix soon
+after its release.
+
 ## Develop
 
 ```bash
@@ -363,6 +371,10 @@ operations that don't take the organization's API token, such as browser-only on
 `npm run check:package` (after `npm run build`) checks the tarball's file list, installs it into
 the consumer in `test/consumer/`, type-checks that consumer under NodeNext, bundler, and node10
 resolution, and checks that the declarations and the runtime export the same values.
+
+CI regenerates from the pinned copy and fails on any difference, so it never depends on the
+network. `regenerate.yml` updates the pinned copy when the docs publish a new contract, and daily,
+and opens a pull request; `contract-drift.yml` reports daily when the published contract differs.
 
 Tests run against a local mock server and refuse any other host.
 
