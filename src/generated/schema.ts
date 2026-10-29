@@ -154,7 +154,7 @@ export interface paths {
          *     - `conversation.end`: the assistant ended the conversation (`reason` explains why).
          *     - `guardian`: a safety condition was detected; `guardianId` is stable.
          *     - `error`: an error; the stream ends after it. `errorCode` is `error.rate_limited`
-         *       (may include `retryAfterSeconds`), `error.internal` (the reply failed; retry the turn), or
+         *       (may include `retryAfterSeconds`), `error.internal` (the reply failed; don't retry the turn automatically: read the transcript, then let the patient resend), or
          *       `error.consultation_not_ready` (the consultation could not be finalized; booking is
          *       unavailable).
          *     - `skill_code.cta`: an end-of-flow call to action (e.g. see a Doctronic doctor, or book
