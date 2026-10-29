@@ -1,0 +1,103 @@
+# Publishes @doctronic-ai/sdk to npm when a vX.Y.Z tag is pushed. The job stops unless the tag
+# matches the package.json version and points at a commit on main.
+#
+# Releases require:
+#
+# 1. The `npm` environment's reviewer approval. The environment must require a reviewer and allow
+#    deployments only from `v*` tags. GitHub creates a missing environment without protection, so
+#    the environment must exist before anyone pushes a `v*` tag.
+# 2. A tag ruleset that limits who can create, move, or delete `v*` tags.
+# 3. An npm trusted publisher for this workflow: GitHub Actions, `doctronic-ai` /
+#    `doctronic-sdk-typescript`, workflow `release.yml`, environment `npm`. npm adds a trusted
+#    publisher from an existing package's settings, so the first version is published by hand. A
+#    new trusted publisher expires unless it publishes within 2 days.
+#
+# 0.1.0 is the version published by hand (requirement 3), so the first tag through this workflow
+# is `v0.1.1`. Don't push `v0.1.0`.
+#
+# A tag push runs this file as it is at the tagged commit, so anyone who can push a tag can run a
+# modified copy. The checks below catch mistakes, not attacks. The protection comes from the
+# requirements above: the environment's reviewer, the tag ruleset, and the trusted publisher bound
+# to this workflow and environment.
+#
+# npm authenticates through OIDC, so there's no npm token. npm adds provenance on its own only
+# when the repository is public.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # No dependency cache: a release installs only from the lockfile.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check the tag matches package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $version. Tag v$version instead."
+            exit 1
+          fi
+
+      - name: Check the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points at a commit that isn't on main. Tag a commit from main."
+            exit 1
+          fi
+
+      - name: Check the package isn't private
+        run: |
+          if [ "$(node -p "require('./package.json').private === true")" = true ]; then
+            echo "::error::package.json has \"private\": true; remove it to publish."
+            exit 1
+          fi
+
+      # Node 22 bundles npm 10. Trusted publishing needs npm 11.5.1 or later.
+      - name: Install npm 11.21.0
+        run: npm install --global npm@11.21.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        run: npm publish --access public
