@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -28,7 +30,7 @@ const RECORDED = [
   '',
   ': keep-alive',
   'event: guardian',
-  'data: {"type":"guardian","guardianId":"emergency_breathing","message":"Please call emergency services now."}',
+  'data: {"type":"guardian","guardianId":"emergency_breathing","message":"Please call emergency services now.","endsConversation":false,"category":"emergency"}',
   '',
   'event: message.content',
   `data: {"type":"message.content","messageId":"${MESSAGE_ID}","content":"tell me more 🩺."}`,
@@ -50,7 +52,7 @@ const RECORDED = [
   `data: {"type":"conversation.end","messageId":"${MESSAGE_ID}","reason":"AGENT_STOP_CODE"}`,
   '',
   'event: ai_consultation.complete',
-  'data: {"type":"ai_consultation.complete","artifacts":{"longSummary":"art_01K6JGGM2G2DB4Y9KB9H9MJJ6Q","shortSummary":null}}',
+  'data: {"type":"ai_consultation.complete","artifacts":{"longSummary":"art_01K6JGGM2G2DB4Y9KB9H9MJJ6Q","shortSummary":null,"soapNote":null}}',
   '',
   'event: error',
   'data: {"type":"error","errorCode":"error.rate_limited","message":"The service is busy right now.","retryAfterSeconds":7}',
@@ -70,6 +72,8 @@ const EXPECTED_EVENTS: ChatStreamEvent[] = [
     type: 'guardian',
     guardianId: 'emergency_breathing',
     message: 'Please call emergency services now.',
+    endsConversation: false,
+    category: 'emergency',
   },
   { type: 'message.content', messageId: MESSAGE_ID, content: 'tell me more 🩺.' },
   { type: 'future.event', data: { type: 'future.event', detail: 'multiline' } },
@@ -84,7 +88,11 @@ const EXPECTED_EVENTS: ChatStreamEvent[] = [
   { type: 'conversation.end', messageId: MESSAGE_ID, reason: 'AGENT_STOP_CODE' },
   {
     type: 'ai_consultation.complete',
-    artifacts: { longSummary: 'art_01K6JGGM2G2DB4Y9KB9H9MJJ6Q', shortSummary: null },
+    artifacts: {
+      longSummary: 'art_01K6JGGM2G2DB4Y9KB9H9MJJ6Q',
+      shortSummary: null,
+      soapNote: null,
+    },
   },
   {
     type: 'error',
@@ -234,8 +242,150 @@ describe('toChatStreamEvent', () => {
   });
 
   it('narrows known events', () => {
-    expect(isKnownChatStreamEvent({ type: 'guardian', guardianId: 'g', message: 'm' })).toBe(true);
+    expect(
+      isKnownChatStreamEvent({
+        type: 'guardian',
+        guardianId: 'g',
+        message: 'm',
+        endsConversation: false,
+        category: 'other',
+      }),
+    ).toBe(true);
     expect(isKnownChatStreamEvent({ type: 'future.event', data: null })).toBe(false);
+  });
+});
+
+describe('events the contract documents', () => {
+  const event = (type: string, data: object) =>
+    toChatStreamEvent({ event: type, data: JSON.stringify({ type, ...data }) });
+  const contract = JSON.parse(
+    readFileSync(new URL('../openapi/doctronic-v1.json', import.meta.url), 'utf8'),
+  );
+  const schemas = contract.components.schemas;
+
+  it('parses every stream example in the pinned contract into a known event', async () => {
+    const examples: { value: string }[] = Object.values(
+      contract.paths['/chats/{chatId}/stream/'].post.responses['200'].content['text/event-stream']
+        .examples,
+    );
+    expect(examples.length).toBeGreaterThan(0);
+    for (const { value } of examples) {
+      const [frame] = await frames(value);
+      if (!frame) throw new Error(`no frame in ${value}`);
+      const parsed = toChatStreamEvent(frame);
+      expect(isKnownChatStreamEvent(parsed), frame.data).toBe(true);
+      expect(parsed).toEqual(JSON.parse(frame.data));
+    }
+  });
+
+  it('keeps a guardian event whose guardianId and category are new', () => {
+    const guardian = event('guardian', {
+      guardianId: 'emergency_new_condition',
+      message: '',
+      endsConversation: true,
+      category: 'escalation',
+    });
+    if (!isKnownChatStreamEvent(guardian) || guardian.type !== 'guardian') {
+      throw new Error('expected a known guardian event');
+    }
+    expect(guardian.guardianId).toBe('emergency_new_condition');
+    expect(guardian.category).toBe('escalation');
+    expect(guardian.endsConversation).toBe(true);
+  });
+
+  it('keeps ai_consultation.complete when every artifact ID is null', () => {
+    const artifacts = { longSummary: null, shortSummary: null, soapNote: null };
+    const complete = event('ai_consultation.complete', { artifacts });
+    expect(complete).toEqual({ type: 'ai_consultation.complete', artifacts });
+    expect(isKnownChatStreamEvent(complete)).toBe(true);
+  });
+
+  it('yields an event type the contract does not list as unknown', () => {
+    const paused = event('conversation.paused', { messageId: 'm' });
+    expect(paused).toEqual({
+      type: 'conversation.paused',
+      data: { type: 'conversation.paused', messageId: 'm' },
+    });
+    expect(isKnownChatStreamEvent(paused)).toBe(false);
+  });
+
+  it('delivers a guardian event without endsConversation or category typed, with the defaults', () => {
+    const guardian = schemas.StreamChatGuardianEvent.properties;
+    expect([guardian.endsConversation.default, guardian.category.default]).toEqual([
+      false,
+      'other',
+    ]);
+
+    const bare = event('guardian', { guardianId: 'emergency_breathing', message: 'Call now.' });
+    expect(bare).toEqual({
+      type: 'guardian',
+      guardianId: 'emergency_breathing',
+      message: 'Call now.',
+      endsConversation: guardian.endsConversation.default,
+      category: guardian.category.default,
+    });
+    if (!isKnownChatStreamEvent(bare) || bare.type !== 'guardian') {
+      throw new Error('expected a known guardian event');
+    }
+    expect(bare.endsConversation).toBe(false);
+    expect(bare.category).toBe('other');
+
+    // Only a missing field gets its default.
+    const partial = event('guardian', {
+      guardianId: 'emergency_breathing',
+      message: '',
+      endsConversation: true,
+    });
+    expect(partial).toMatchObject({ endsConversation: true, category: 'other' });
+    expect(isKnownChatStreamEvent(partial)).toBe(true);
+  });
+
+  it('treats a null endsConversation or category as missing', () => {
+    const nulls = event('guardian', {
+      guardianId: 'emergency_breathing',
+      message: 'Call now.',
+      endsConversation: null,
+      category: null,
+    });
+    expect(nulls).toEqual({
+      type: 'guardian',
+      guardianId: 'emergency_breathing',
+      message: 'Call now.',
+      endsConversation: false,
+      category: 'other',
+    });
+    expect(isKnownChatStreamEvent(nulls)).toBe(true);
+
+    const oneNull = event('guardian', {
+      guardianId: 'check_emergency_phrase',
+      message: '',
+      endsConversation: true,
+      category: null,
+    });
+    expect(oneNull).toMatchObject({ endsConversation: true, category: 'other' });
+    expect(isKnownChatStreamEvent(oneNull)).toBe(true);
+  });
+
+  it('still yields a guardian event as unknown for a wrong-typed value or a missing guardianId or message', () => {
+    for (const data of [
+      { guardianId: 'emergency_breathing', message: 'Call now.', endsConversation: 'yes' },
+      { guardianId: 'emergency_breathing', message: 'Call now.', category: 7 },
+      { guardianId: 'emergency_breathing', message: null },
+      { message: 'Call now.' },
+    ]) {
+      const malformed = event('guardian', data);
+      // The unknown event carries the payload as sent, without the defaults.
+      expect(malformed).toEqual({ type: 'guardian', data: { type: 'guardian', ...data } });
+      expect(isKnownChatStreamEvent(malformed)).toBe(false);
+    }
+  });
+
+  it('accepts the fields the contract makes optional', () => {
+    expect(isKnownChatStreamEvent(event('skill_code.cta', { skillCode: '109' }))).toBe(true);
+    expect(isKnownChatStreamEvent(event('conversation.end', {}))).toBe(true);
+    expect(
+      isKnownChatStreamEvent(event('error', { errorCode: 'error.internal', message: 'Failed.' })),
+    ).toBe(true);
   });
 });
 
@@ -321,6 +471,16 @@ describe('chats.stream', () => {
     ]);
   });
 
+  it('leaves out a null messageTimestamp', async () => {
+    server.enqueue(
+      sse([
+        `event: message.start\ndata: ${JSON.stringify({ role: 'assistant', messageId: 'a', messageTimestamp: null })}\n\n`,
+      ]),
+    );
+    const { messages } = await (await scoped.chats.stream(CHAT_ID, turn)).finalMessages();
+    expect(messages).toEqual([{ messageId: 'a', role: 'assistant', content: '', complete: false }]);
+  });
+
   it('accumulates what was read when iteration stops early', async () => {
     server.enqueue(sse(chunked('\n', 80)));
     const stream = await scoped.chats.stream(CHAT_ID, turn);
@@ -378,13 +538,19 @@ describe('chats.stream', () => {
     server.enqueue(
       sse([
         'event: guardian\ndata: not json\n\n',
-        'event: guardian\ndata: {"guardianId":"emergency_breathing","message":"Call now."}\n\n',
+        'event: guardian\ndata: {"guardianId":"emergency_breathing","message":"Call now.","endsConversation":false,"category":"emergency"}\n\n',
       ]),
     );
     const { controlEvents } = await (await scoped.chats.stream(CHAT_ID, turn)).finalMessages();
     expect(controlEvents).toEqual([
       { type: 'guardian', data: 'not json' },
-      { type: 'guardian', guardianId: 'emergency_breathing', message: 'Call now.' },
+      {
+        type: 'guardian',
+        guardianId: 'emergency_breathing',
+        message: 'Call now.',
+        endsConversation: false,
+        category: 'emergency',
+      },
     ]);
     expect(controlEvents.map(isKnownChatStreamEvent)).toEqual([false, true]);
   });

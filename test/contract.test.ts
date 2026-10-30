@@ -1,11 +1,19 @@
 // The generator's reading of the contract (scripts/contract.mjs), on the pinned copy and on
 // variants of it built here.
 
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import openapiTS, { astToString } from 'openapi-typescript';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
   describeOperations,
+  describeStreamEvents,
+  describeWebhooks,
+  EVENT_SCHEMA_EXTENSION,
   loadContract,
   PINNED_CONTRACT,
   RETRYABLE_CODES_EXTENSION,
@@ -13,6 +21,7 @@ import {
   type Contract,
   type OperationDescription,
 } from '../scripts/contract.mjs';
+import { streamEventFields, webhookEvents } from '../src/generated/events.js';
 import { operations } from '../src/generated/operations.js';
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -63,17 +72,34 @@ describe('the pinned contract', () => {
     expect(generated).toEqual(operations);
   });
 
-  it('has no operations to skip', () => {
-    const { contract, skipped } = sdkContract(pinned);
+  it('skips only the browser-only embed operations', () => {
+    expect(sdkContract(pinned).skipped).toEqual([
+      'GET /embed/config/',
+      'POST /embed/sessions/',
+      'POST /embed/sessions/refresh/',
+      'GET /embed/chats/{chatId}/offramps/{kind}/',
+      'GET /embed/go/{ref}/',
+      'POST /embed/chats/{chatId}/rating/',
+      'PATCH /embed/chats/{chatId}/rating/',
+    ]);
+  });
+
+  it('is returned unchanged when there is nothing to skip', () => {
+    const orgOnly = copy(pinned);
+    for (const path of Object.keys(orgOnly.paths as Json)) {
+      if (path.startsWith('/embed/')) delete orgOnly.paths[path];
+    }
+    const { contract, skipped } = sdkContract(orgOnly);
     expect(skipped).toEqual([]);
-    expect(contract).toBe(pinned);
+    expect(contract).toBe(orgOnly);
   });
 });
 
 describe('operations without the organization token', () => {
   it('are skipped', () => {
     const { contract, skipped } = sdkContract(withSessionOperations(pinned));
-    expect(skipped).toEqual([
+    const before = sdkContract(pinned).skipped;
+    expect(skipped.filter((key) => !before.includes(key))).toEqual([
       'DELETE /chats/',
       'HEAD /chats/',
       'OPTIONS /chats/',
@@ -122,7 +148,8 @@ describe(`409 responses with ${RETRYABLE_CODES_EXTENSION}`, () => {
       mismatch: { value: { code: MISMATCH, message: 'Different body.' } },
       concurrent: { value: { code: CONCURRENT, message: 'In progress.' } },
     };
-    if (retryable !== undefined) conflict[RETRYABLE_CODES_EXTENSION] = retryable;
+    if (retryable === undefined) delete conflict[RETRYABLE_CODES_EXTENSION];
+    else conflict[RETRYABLE_CODES_EXTENSION] = retryable;
     return next;
   }
 
@@ -153,5 +180,156 @@ describe(`409 responses with ${RETRYABLE_CODES_EXTENSION}`, () => {
     for (const value of [CONCURRENT, [CONCURRENT, 7], [''], { code: CONCURRENT }]) {
       expect(() => describe_(withConflicts(pinned, value))).toThrow(RETRYABLE_CODES_EXTENSION);
     }
+  });
+});
+
+describe('stream events', () => {
+  const streamMedia = (contract: Json) =>
+    contract.paths['/chats/{chatId}/stream/'].post.responses['200'].content[
+      'text/event-stream'
+    ] as Json;
+  const schemas = (contract: Json) => contract.components.schemas as Json;
+  const fieldsOf = (contract: Contract, type: string) =>
+    describeStreamEvents(contract).events.find((event) => event.type === type)?.fields;
+
+  it('generates the committed event fields', () => {
+    const { operations: streams, union, property, events } = describeStreamEvents(pinned);
+    expect({ streams, union, property }).toEqual({
+      streams: ['POST /chats/{chatId}/stream/'],
+      union: 'StreamChatEvent',
+      property: 'type',
+    });
+    expect(Object.fromEntries(events.map(({ type, fields }) => [type, fields]))).toEqual(
+      streamEventFields,
+    );
+  });
+
+  it('reads open enums as strings and keeps a nullable field nullable', () => {
+    const next = copy(pinned);
+    const guardian = schemas(next).StreamChatGuardianEvent as Json;
+    guardian.required = [...(guardian.required as string[]), 'title'];
+    expect(fieldsOf(next, 'guardian')).toEqual({
+      guardianId: ['string'],
+      message: ['string'],
+      endsConversation: ['boolean'],
+      category: ['string'],
+      title: ['null', 'string'],
+    });
+  });
+
+  it(`fails the generator without ${EVENT_SCHEMA_EXTENSION}`, () => {
+    const next = copy(pinned);
+    delete streamMedia(next)[EVENT_SCHEMA_EXTENSION];
+    expect(() => describeStreamEvents(next)).toThrow(
+      `POST /chats/{chatId}/stream/: the text/event-stream response has no ${EVENT_SCHEMA_EXTENSION} $ref`,
+    );
+  });
+
+  it('fails the generator when the union has no discriminator mapping', () => {
+    const next = copy(pinned);
+    delete (schemas(next).StreamChatEvent as Json).discriminator;
+    expect(() => describeStreamEvents(next)).toThrow(/StreamChatEvent must be a oneOf/);
+  });
+
+  it('fails the generator when the mapping and oneOf disagree', () => {
+    const next = copy(pinned);
+    const union = schemas(next).StreamChatEvent as Json;
+    union.oneOf = (union.oneOf as { $ref: string }[]).filter(
+      (member) => !member.$ref.endsWith('ErrorEvent'),
+    );
+    expect(() => describeStreamEvents(next)).toThrow(/StreamChatErrorEvent, which isn't in oneOf/);
+  });
+
+  it("fails the generator when an event's discriminator isn't its mapped value", () => {
+    const next = copy(pinned);
+    (schemas(next).StreamChatErrorEvent as Json).properties.type.const = 'stream.error';
+    expect(() => describeStreamEvents(next)).toThrow(
+      'StreamChatErrorEvent.type must be the constant "error"',
+    );
+  });
+
+  it("fails the generator on a required field whose JSON type it can't tell", () => {
+    const next = copy(pinned);
+    (schemas(next).StreamChatErrorEvent as Json).properties.errorCode = {};
+    expect(() => describeStreamEvents(next)).toThrow(/StreamChatErrorEvent.errorCode/);
+  });
+});
+
+describe('webhooks', () => {
+  it('generates the committed webhook events', () => {
+    expect(describeWebhooks(pinned)).toEqual([
+      { event: 'appointment.call_ended', component: 'AppointmentCallEndedPayload' },
+      {
+        event: 'appointment.practitioner_joined',
+        component: 'AppointmentPractitionerJoinedPayload',
+      },
+      { event: 'appointment.waiting_room_ready', component: 'AppointmentWaitingRoomReadyPayload' },
+      { event: 'artifact.ready', component: 'ArtifactReadyPayload' },
+    ]);
+    expect(describeWebhooks(pinned).map(({ event }) => event)).toEqual(webhookEvents);
+  });
+
+  it('fails the generator without webhooks', () => {
+    const next = copy(pinned);
+    delete next.webhooks;
+    expect(() => describeWebhooks(next)).toThrow(/The contract has no webhooks/);
+  });
+
+  it('fails the generator when a payload stops requiring occurredAt', () => {
+    const next = copy(pinned);
+    const payload = next.components.schemas.ArtifactReadyPayload as Json;
+    payload.required = (payload.required as string[]).filter((field) => field !== 'occurredAt');
+    expect(() => describeWebhooks(next)).toThrow(
+      "webhooks.artifact.ready: ArtifactReadyPayload doesn't require occurredAt",
+    );
+  });
+
+  it("fails the generator when a payload's event isn't the webhook's name", () => {
+    const next = copy(pinned);
+    next.webhooks['artifact.ready'].post.requestBody.content['application/json'].schema.$ref =
+      '#/components/schemas/AppointmentCallEndedPayload';
+    expect(() => describeWebhooks(next)).toThrow(
+      'AppointmentCallEndedPayload.event must be the constant "artifact.ready"',
+    );
+  });
+});
+
+describe('npm run generate', () => {
+  const script = new URL('../scripts/generate.mjs', import.meta.url).pathname;
+  const generated = ['schema.ts', 'operations.ts', 'events.ts'].map(
+    (name) => new URL(`../src/generated/${name}`, import.meta.url),
+  );
+  const outputs = () => generated.map((file) => readFileSync(file, 'utf8'));
+
+  // Runs the generator on `contract` and returns what it printed to stderr. It must fail.
+  function failedRun(contract: Json): string {
+    const dir = mkdtempSync(join(tmpdir(), 'doctronic-contract-'));
+    try {
+      const path = join(dir, 'contract.json');
+      writeFileSync(path, JSON.stringify(contract));
+      execFileSync(process.execPath, [script, '--contract', path], { stdio: 'pipe' });
+    } catch (error) {
+      expect((error as { status?: number }).status).toBe(1);
+      return String((error as { stderr?: Buffer }).stderr);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    throw new Error('npm run generate succeeded');
+  }
+
+  it('fails, and writes nothing, without the stream events or the webhooks', () => {
+    const before = outputs();
+
+    const noEvents = copy(pinned);
+    delete noEvents.paths['/chats/{chatId}/stream/'].post.responses['200'].content[
+      'text/event-stream'
+    ][EVENT_SCHEMA_EXTENSION];
+    expect(failedRun(noEvents)).toMatch(/has no x-doctronic-event-schema \$ref/);
+
+    const noWebhooks = copy(pinned);
+    delete noWebhooks.webhooks;
+    expect(failedRun(noWebhooks)).toMatch(/The contract has no webhooks/);
+
+    expect(outputs()).toEqual(before);
   });
 });

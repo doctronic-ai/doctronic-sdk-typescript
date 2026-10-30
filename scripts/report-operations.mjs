@@ -96,10 +96,10 @@ async function main() {
     added.length || removed.length || changed.length
       ? `The SDK covers ${after.operations.size} operations (${before.operations.size} before).`
       : `The SDK covers ${after.operations.size} operations. None were added or removed, and their runtime facts are unchanged.`;
-  // Runtime facts only: request and response types can change without any of the above. The
-  // diff of src/generated/schema.ts shows those.
+  // Runtime facts only: request, response, stream event, and webhook types can change without any
+  // of the above. The diffs of src/generated/schema.ts and events.ts show those.
   const types =
-    'Request and response types can change too; review `src/generated/schema.ts` in the diff.';
+    'Request, response, stream event, and webhook types can change too; review `src/generated/schema.ts` and `src/generated/events.ts` in the diff.';
   console.log([summary, ...sections, types].join('\n\n'));
 }
 
