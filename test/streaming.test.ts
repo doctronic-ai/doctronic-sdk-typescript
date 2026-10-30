@@ -340,10 +340,37 @@ describe('events the contract documents', () => {
     expect(isKnownChatStreamEvent(partial)).toBe(true);
   });
 
-  it('still yields a guardian event as unknown when a field is the wrong type or guardianId is missing', () => {
+  it('treats a null endsConversation or category as missing', () => {
+    const nulls = event('guardian', {
+      guardianId: 'emergency_breathing',
+      message: 'Call now.',
+      endsConversation: null,
+      category: null,
+    });
+    expect(nulls).toEqual({
+      type: 'guardian',
+      guardianId: 'emergency_breathing',
+      message: 'Call now.',
+      endsConversation: false,
+      category: 'other',
+    });
+    expect(isKnownChatStreamEvent(nulls)).toBe(true);
+
+    const oneNull = event('guardian', {
+      guardianId: 'check_emergency_phrase',
+      message: '',
+      endsConversation: true,
+      category: null,
+    });
+    expect(oneNull).toMatchObject({ endsConversation: true, category: 'other' });
+    expect(isKnownChatStreamEvent(oneNull)).toBe(true);
+  });
+
+  it('still yields a guardian event as unknown for a wrong-typed value or a missing guardianId or message', () => {
     for (const data of [
       { guardianId: 'emergency_breathing', message: 'Call now.', endsConversation: 'yes' },
-      { guardianId: 'emergency_breathing', message: 'Call now.', category: null },
+      { guardianId: 'emergency_breathing', message: 'Call now.', category: 7 },
+      { guardianId: 'emergency_breathing', message: null },
       { message: 'Call now.' },
     ]) {
       const malformed = event('guardian', data);

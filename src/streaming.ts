@@ -131,8 +131,8 @@ function isWellFormed(type: string, payload: unknown): payload is Record<string,
   });
 }
 
-// A safety event is never demoted to unknown for lacking these two fields: a `guardian` event
-// without one gets the contract's default for it. A field that's present is still checked, as is
+// A safety event is never demoted to unknown over these two fields: a `guardian` event where one is
+// missing or `null` gets the contract's default for it. Any other value is still checked, as is
 // every other required field.
 const GUARDIAN_DEFAULTS: Pick<GuardianEvent, 'endsConversation' | 'category'> = {
   endsConversation: false,
@@ -142,9 +142,7 @@ const GUARDIAN_DEFAULTS: Pick<GuardianEvent, 'endsConversation' | 'category'> = 
 function withDefaults(type: string, payload: unknown): unknown {
   if (type !== 'guardian' || !isRecord(payload)) return payload;
   const filled = { ...payload };
-  for (const [field, value] of Object.entries(GUARDIAN_DEFAULTS)) {
-    if (!Object.hasOwn(filled, field)) filled[field] = value;
-  }
+  for (const [field, value] of Object.entries(GUARDIAN_DEFAULTS)) filled[field] ??= value;
   return filled;
 }
 
@@ -159,7 +157,8 @@ export function isKnownChatStreamEvent(event: ChatStreamEvent): event is KnownCh
 /**
  * Turns one SSE frame into a typed event. Never throws: an unknown event name, or a documented
  * one whose payload lacks its required fields, is yielded as `{ type, data }`. A `guardian` event
- * without `endsConversation` or `category` gets the contract's defaults, `false` and `"other"`.
+ * whose `endsConversation` or `category` is missing or `null` gets the contract's default for it,
+ * `false` or `"other"`.
  */
 export function toChatStreamEvent(frame: SseFrame): ChatStreamEvent {
   let payload: unknown;

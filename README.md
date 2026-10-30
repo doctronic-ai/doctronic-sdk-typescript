@@ -186,8 +186,8 @@ doesn't know yet arrives as `{ type, data }`, and so does a documented event tha
 contract says it always carries. Neither throws, so later events, such as `guardian`, still arrive.
 Check `isKnownChatStreamEvent()` before you switch so TypeScript narrows each case.
 
-A `guardian` event is never set aside for lacking `endsConversation` or `category`: it arrives typed,
-with the contract's defaults, `false` and `"other"`.
+A `guardian` event is never set aside over `endsConversation` or `category`: when one is missing or
+`null`, the event arrives typed, with the contract's default for it, `false` or `"other"`.
 
 `guardianId` and `category` take values the contract doesn't list yet, so they're typed as
 `string`. `GuardianId` and `GuardianCategory` list the documented values. In
