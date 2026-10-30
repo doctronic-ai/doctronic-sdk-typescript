@@ -1,10 +1,12 @@
 // The chat stream: an SSE parser ported from the docs' reference parser
 // (conversations/streaming.mdx), the typed event union, and the optional accumulator.
 //
-// The contract documents the events as examples only, so the event types below follow the
-// event reference table in the docs.
+// The event types and the fields each event must carry are generated from the contract
+// (src/generated/events.ts), from the union that the stream's `x-doctronic-event-schema` names.
 
 import { APIConnectionError, APIUserAbortError, DoctronicError, isRecord } from './errors.js';
+import { streamEventFields, type JsonType, type StreamEvents } from './generated/events.js';
+import type { components } from './generated/schema.js';
 
 export type SseFrame = { event: string; data: string };
 
@@ -55,72 +57,43 @@ export async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerato
 }
 
 /** `message.start`: start a message with this `role` and `messageId`. */
-export interface MessageStartEvent {
-  type: 'message.start';
-  role: string;
-  messageId: string;
-  /** Milliseconds since the Unix epoch. */
-  messageTimestamp?: number;
-}
+export type MessageStartEvent = StreamEvents['message.start'];
 
 /** `message.content`: append `content` to the message with the same `messageId`. */
-export interface MessageContentEvent {
-  type: 'message.content';
-  messageId: string;
-  content: string;
-}
+export type MessageContentEvent = StreamEvents['message.content'];
 
 /** `message.stop`: that message is complete. The turn and the consultation continue. */
-export interface MessageStopEvent {
-  type: 'message.stop';
-  messageId: string;
-}
+export type MessageStopEvent = StreamEvents['message.stop'];
 
-/** `guardian`: run your approved safety behavior and log the stable `guardianId`. */
-export interface GuardianEvent {
-  type: 'guardian';
-  guardianId: string;
-  message: string;
-}
+/**
+ * `guardian`: run your approved safety behavior and log the stable `guardianId`. When
+ * `endsConversation` is `true`, stop taking input but keep reading until `conversation.end`.
+ */
+export type GuardianEvent = StreamEvents['guardian'];
+
+/** The guardian IDs the contract lists. New IDs can be added, so `guardianId` is any string. */
+export type GuardianId = components['schemas']['PartnerGuardianId'];
+
+/** The guardian categories the contract lists. New ones can be added, so `category` is any string. */
+export type GuardianCategory = components['schemas']['GuardianCategory'];
 
 /** `conversation.offtopic`: the patient's message was classified as off-topic. */
-export interface ConversationOfftopicEvent {
-  type: 'conversation.offtopic';
-  messageId?: string;
-}
+export type ConversationOfftopicEvent = StreamEvents['conversation.offtopic'];
 
 /** `conversation.end`: the assistant ended the conversation. */
-export interface ConversationEndEvent {
-  type: 'conversation.end';
-  messageId?: string;
-  reason?: string;
-}
+export type ConversationEndEvent = StreamEvents['conversation.end'];
 
 /** `skill_code.cta`: present the end-of-flow action mapped to this `skillCode` and `widget`. */
-export interface SkillCodeCtaEvent {
-  type: 'skill_code.cta';
-  skillCode: string;
-  widget: string;
-  text?: string;
-}
+export type SkillCodeCtaEvent = StreamEvents['skill_code.cta'];
 
-/** `ai_consultation.complete`: the consultation is complete. An absent or `null` ID wasn't generated. */
-export interface AiConsultationCompleteEvent {
-  type: 'ai_consultation.complete';
-  artifacts: {
-    longSummary?: string | null;
-    shortSummary?: string | null;
-    soapNote?: string | null;
-  };
-}
+/** `ai_consultation.complete`: the consultation is complete. A `null` ID wasn't generated. */
+export type AiConsultationCompleteEvent = StreamEvents['ai_consultation.complete'];
+
+/** The document IDs in `ai_consultation.complete`, for `artifacts.retrieve()`. */
+export type ConsultationArtifacts = components['schemas']['ConsultationArtifacts'];
 
 /** `error`: a failure after the stream started. Handle it apart from message text. */
-export interface StreamErrorEvent {
-  type: 'error';
-  errorCode: string;
-  message: string;
-  retryAfterSeconds?: number;
-}
+export type StreamErrorEvent = StreamEvents['error'];
 
 /** An event this SDK doesn't know yet. New event names are additive: ignore what you don't use. */
 export interface UnknownChatStreamEvent {
@@ -128,41 +101,33 @@ export interface UnknownChatStreamEvent {
   data: unknown;
 }
 
-export type KnownChatStreamEvent =
-  | MessageStartEvent
-  | MessageContentEvent
-  | MessageStopEvent
-  | GuardianEvent
-  | ConversationOfftopicEvent
-  | ConversationEndEvent
-  | SkillCodeCtaEvent
-  | AiConsultationCompleteEvent
-  | StreamErrorEvent;
+/** Every event the contract documents, as a union on `type`. */
+export type KnownChatStreamEvent = StreamEvents[keyof StreamEvents];
 
 export type ChatStreamEvent = KnownChatStreamEvent | UnknownChatStreamEvent;
 
-// The fields each documented event must carry, by type. A payload missing one is yielded as an
-// unknown event rather than with a type it doesn't satisfy.
-const REQUIRED_FIELDS: Record<KnownChatStreamEvent['type'], Record<string, 'string' | 'object'>> = {
-  'message.start': { role: 'string', messageId: 'string' },
-  'message.content': { messageId: 'string', content: 'string' },
-  'message.stop': { messageId: 'string' },
-  guardian: { guardianId: 'string', message: 'string' },
-  'conversation.offtopic': {},
-  'conversation.end': {},
-  'skill_code.cta': { skillCode: 'string', widget: 'string' },
-  'ai_consultation.complete': { artifacts: 'object' },
-  error: { errorCode: 'string', message: 'string' },
-};
-
 const unknownEvents = new WeakSet<object>();
 
+function jsonTypeOf(value: unknown): JsonType | undefined {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  const type = typeof value;
+  return type === 'string' || type === 'number' || type === 'boolean' || type === 'object'
+    ? type
+    : undefined;
+}
+
+// A documented event must carry each field the contract says it always carries, with one of the
+// field's JSON types. Otherwise it's yielded as an unknown event rather than with a type it doesn't
+// satisfy. Only the event's own fields are checked: `artifacts` only has to be an object.
 function isWellFormed(type: string, payload: unknown): payload is Record<string, unknown> {
-  if (!Object.hasOwn(REQUIRED_FIELDS, type) || !isRecord(payload)) return false;
-  const required = REQUIRED_FIELDS[type as KnownChatStreamEvent['type']];
-  return Object.entries(required).every(([field, kind]) =>
-    kind === 'object' ? isRecord(payload[field]) : typeof payload[field] === kind,
-  );
+  if (!Object.hasOwn(streamEventFields, type) || !isRecord(payload)) return false;
+  const fields: Readonly<Record<string, readonly JsonType[]>> =
+    streamEventFields[type as KnownChatStreamEvent['type']];
+  return Object.entries(fields).every(([field, types]) => {
+    const actual = jsonTypeOf(payload[field]);
+    return actual !== undefined && types.includes(actual);
+  });
 }
 
 /**
@@ -232,7 +197,9 @@ class Accumulator {
           content: '',
           complete: false,
         };
-        if (event.messageTimestamp !== undefined) message.messageTimestamp = event.messageTimestamp;
+        if (typeof event.messageTimestamp === 'number') {
+          message.messageTimestamp = event.messageTimestamp;
+        }
         this.#messages.set(event.messageId, message);
         break;
       }

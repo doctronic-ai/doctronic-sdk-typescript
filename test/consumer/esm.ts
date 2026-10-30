@@ -18,8 +18,12 @@ import {
   UsersResource,
   VERSION,
   isKnownChatStreamEvent,
+  isKnownWebhookEvent,
   verifyWebhook,
+  type ArtifactReadyData,
   type ChatStreamEvent,
+  type ConsultationArtifacts,
+  type GuardianId,
   type User,
   type WebhookEvent,
 } from '@doctronic-ai/sdk';
@@ -58,6 +62,21 @@ export async function firstEvent(stream: ChatStream): Promise<ChatStreamEvent | 
     if (isKnownChatStreamEvent(event)) return event;
   }
   return undefined;
+}
+
+// The stream event and webhook payload types, which the package generates from the contract.
+// `guardianId` is open: it takes IDs the contract doesn't list yet, so it's a string.
+const BREATHING: GuardianId = 'emergency_breathing';
+
+export function onEvent(event: ChatStreamEvent): ConsultationArtifacts | boolean | null {
+  if (!isKnownChatStreamEvent(event)) return null;
+  if (event.type === 'guardian') return event.guardianId === BREATHING || event.endsConversation;
+  if (event.type === 'ai_consultation.complete') return event.artifacts;
+  return null;
+}
+
+export function onArtifactReady(event: WebhookEvent): ArtifactReadyData | null {
+  return isKnownWebhookEvent(event) && event.event === 'artifact.ready' ? event.data : null;
 }
 
 export function verify(body: string, signature: string, secret: string): WebhookEvent | null {

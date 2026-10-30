@@ -166,7 +166,8 @@ for await (const event of stream) {
     case 'message.stop': // That message is complete. The turn continues.
       break;
     case 'guardian':
-      runSafetyBehavior(event.guardianId);
+      // When event.endsConversation is true, stop taking input but read on to conversation.end.
+      runSafetyBehavior(event.guardianId, event.endsConversation);
       break;
     case 'ai_consultation.complete':
       storeArtifactIds(event.artifacts);
@@ -180,9 +181,15 @@ for await (const event of stream) {
 
 Events form a union on `type`: `message.start`, `message.content`, `message.stop`, `guardian`,
 `conversation.offtopic`, `conversation.end`, `skill_code.cta`, `ai_consultation.complete`, and
-`error`. An event this SDK doesn't know yet arrives as `{ type, data }`, and so does a documented
-event whose payload lacks its required fields. Neither throws, so later events, such as `guardian`,
-still arrive. Check `isKnownChatStreamEvent()` before you switch so TypeScript narrows each case.
+`error`. Their types are generated from the event schemas the contract publishes. An event this SDK
+doesn't know yet arrives as `{ type, data }`, and so does a documented event that lacks a field the
+contract says it always carries. Neither throws, so later events, such as `guardian`, still arrive.
+Check `isKnownChatStreamEvent()` before you switch so TypeScript narrows each case.
+
+`guardianId` and `category` take values the contract doesn't list yet, so they're typed as
+`string`. `GuardianId` and `GuardianCategory` list the documented values. In
+`ai_consultation.complete`, each ID in `artifacts` is a string, or `null` when that document wasn't
+generated.
 
 To collect the whole turn instead, call `finalMessages()`. It assembles messages by `messageId` with
 the role from `message.start`, and returns every other event in arrival order:
@@ -344,7 +351,8 @@ app.post('/webhooks/doctronic', express.raw({ type: 'application/json' }), (req,
 ```
 
 Typed events: `appointment.waiting_room_ready`, `appointment.practitioner_joined`,
-`appointment.call_ended`, and `artifact.ready`. Any other name arrives with `data: unknown`.
+`appointment.call_ended`, and `artifact.ready`, with payload types generated from the contract's
+`webhooks`. Any other name arrives with `data: unknown`.
 
 ## Versioning
 

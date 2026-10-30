@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased
+
+A minor release. The stream event and webhook payload types are generated from the contract, and
+the stream event types change where the contract differs from the handwritten ones. The pinned
+contract also brings the API changes under "Contract update".
+
+### Breaking type changes
+
+The stream event types follow the contract, which describes what the API sends:
+
+- `MessageStartEvent`: `role` is `'assistant' | 'user'`, not `string`. `messageTimestamp` can be
+  `null`.
+- `GuardianEvent`: new required `endsConversation: boolean` and `category: string`, and new optional
+  `title` and `text` (`string | null`). `guardianId` and `category` stay open: any string.
+- `SkillCodeCtaEvent`: `widget` is optional and can be `null`; it was a required string. `text` can
+  be `null`.
+- `AiConsultationCompleteEvent`: `artifacts.longSummary`, `shortSummary`, and `soapNote` are
+  required, `string | null`. They were optional.
+- `ConversationOfftopicEvent.messageId`, `ConversationEndEvent.messageId` and `reason`, and
+  `StreamErrorEvent.retryAfterSeconds` can be `null`. They stay optional.
+- The nine event types are type aliases, not interfaces, so declaration merging can't extend them.
+  `extends` and `implements` still work.
+
+The webhook event types keep their shapes.
+
+### Stream events and webhooks
+
+- `KnownChatStreamEvent` is the contract's event union, and `KnownWebhookEvent` the union of its
+  webhook payloads. Every exported name stays.
+- New types: `GuardianId` and `GuardianCategory` (the documented values), `ConsultationArtifacts`,
+  and the webhook data types `AppointmentWaitingRoomReadyData`,
+  `AppointmentPractitionerJoinedData`, `AppointmentCallEndedData`, and `ArtifactReadyData`.
+- A documented stream event must carry the fields the contract marks required, with their JSON
+  types, or it arrives as `{ type, data }`. `guardian` now needs `endsConversation` and `category`,
+  and `skill_code.cta` no longer needs `widget`. Unknown event types still arrive as
+  `{ type, data }`, and unknown webhook events with `data: unknown`.
+- `finalMessages()` leaves out a `null` `messageTimestamp`.
+
+### Code generation
+
+- `npm run generate` writes `src/generated/events.ts`: the stream events from the union that
+  `x-doctronic-event-schema` names on `POST /chats/{chatId}/stream/`, and the webhooks from the
+  contract's `webhooks`. A contract without either fails the run, which writes nothing.
+
+### Contract update
+
+The pinned contract (`info.version` 1.0.0) also brings:
+
+- The 11 idempotent operations document `409 error.idempotency.payload_mismatch` and
+  `error.idempotency.concurrent_request`, and list `concurrent_request` as retryable. A
+  `409 payload_mismatch`, a key reused with a different body, is no longer retried.
+  `concurrent_request`, and a `409` without a code, still are.
+- `CreateChatParams` has an optional `starterPromptIndex`, and `PharmacySearchParams` optional
+  `phoneNumber` and `address`.
+- `address.set()` and `pharmacy.set()` resolve to `null`, not `unknown`.
+- `POST /chats/`, `GET /chats/{chatId}/`, `GET /chats/{chatId}/messages/`, and the stream document
+  `429`.
+- Seven browser-only `/embed/` operations are skipped, because they don't take the organization's
+  API token.
+
 ## 0.1.1
 
 ### Fixes
