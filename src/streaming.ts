@@ -120,6 +120,7 @@ function jsonTypeOf(value: unknown): JsonType | undefined {
 // A documented event must carry each field the contract says it always carries, with one of the
 // field's JSON types. Otherwise it's yielded as an unknown event rather than with a type it doesn't
 // satisfy. Only the event's own fields are checked: `artifacts` only has to be an object.
+// `guardian` is the exception: see GUARDIAN_DEFAULTS.
 function isWellFormed(type: string, payload: unknown): payload is Record<string, unknown> {
   if (!Object.hasOwn(streamEventFields, type) || !isRecord(payload)) return false;
   const fields: Readonly<Record<string, readonly JsonType[]>> =
@@ -128,6 +129,23 @@ function isWellFormed(type: string, payload: unknown): payload is Record<string,
     const actual = jsonTypeOf(payload[field]);
     return actual !== undefined && types.includes(actual);
   });
+}
+
+// A safety event is never demoted to unknown for lacking these two fields: a `guardian` event
+// without one gets the contract's default for it. A field that's present is still checked, as is
+// every other required field.
+const GUARDIAN_DEFAULTS: Pick<GuardianEvent, 'endsConversation' | 'category'> = {
+  endsConversation: false,
+  category: 'other',
+};
+
+function withDefaults(type: string, payload: unknown): unknown {
+  if (type !== 'guardian' || !isRecord(payload)) return payload;
+  const filled = { ...payload };
+  for (const [field, value] of Object.entries(GUARDIAN_DEFAULTS)) {
+    if (!Object.hasOwn(filled, field)) filled[field] = value;
+  }
+  return filled;
 }
 
 /**
@@ -140,7 +158,8 @@ export function isKnownChatStreamEvent(event: ChatStreamEvent): event is KnownCh
 
 /**
  * Turns one SSE frame into a typed event. Never throws: an unknown event name, or a documented
- * one whose payload lacks its required fields, is yielded as `{ type, data }`.
+ * one whose payload lacks its required fields, is yielded as `{ type, data }`. A `guardian` event
+ * without `endsConversation` or `category` gets the contract's defaults, `false` and `"other"`.
  */
 export function toChatStreamEvent(frame: SseFrame): ChatStreamEvent {
   let payload: unknown;
@@ -155,7 +174,8 @@ export function toChatStreamEvent(frame: SseFrame): ChatStreamEvent {
     frame.event === 'message' && isRecord(payload) && typeof payload.type === 'string'
       ? payload.type
       : frame.event;
-  if (isWellFormed(type, payload)) return { ...payload, type } as KnownChatStreamEvent;
+  const filled = withDefaults(type, payload);
+  if (isWellFormed(type, filled)) return { ...filled, type } as KnownChatStreamEvent;
   const event: UnknownChatStreamEvent = { type, data: payload };
   unknownEvents.add(event);
   return event;

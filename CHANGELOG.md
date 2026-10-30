@@ -33,9 +33,12 @@ The webhook event types keep their shapes.
   and the webhook data types `AppointmentWaitingRoomReadyData`,
   `AppointmentPractitionerJoinedData`, `AppointmentCallEndedData`, and `ArtifactReadyData`.
 - A documented stream event must carry the fields the contract marks required, with their JSON
-  types, or it arrives as `{ type, data }`. `guardian` now needs `endsConversation` and `category`,
-  and `skill_code.cta` no longer needs `widget`. Unknown event types still arrive as
-  `{ type, data }`, and unknown webhook events with `data: unknown`.
+  types, or it arrives as `{ type, data }`. `skill_code.cta` no longer needs `widget`. Unknown
+  event types still arrive as `{ type, data }`, and unknown webhook events with `data: unknown`.
+- A `guardian` event without `endsConversation` or `category` arrives typed, with the contract's
+  defaults, `false` and `"other"`. A safety event is never set aside as unknown for lacking them.
+  One that lacks `guardianId` or `message`, or has a field of the wrong type, still arrives as
+  `{ type, data }`.
 - `finalMessages()` leaves out a `null` `messageTimestamp`.
 
 ### Code generation

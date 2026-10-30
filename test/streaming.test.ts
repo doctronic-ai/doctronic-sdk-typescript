@@ -258,11 +258,12 @@ describe('toChatStreamEvent', () => {
 describe('events the contract documents', () => {
   const event = (type: string, data: object) =>
     toChatStreamEvent({ event: type, data: JSON.stringify({ type, ...data }) });
+  const contract = JSON.parse(
+    readFileSync(new URL('../openapi/doctronic-v1.json', import.meta.url), 'utf8'),
+  );
+  const schemas = contract.components.schemas;
 
   it('parses every stream example in the pinned contract into a known event', async () => {
-    const contract = JSON.parse(
-      readFileSync(new URL('../openapi/doctronic-v1.json', import.meta.url), 'utf8'),
-    );
     const examples: { value: string }[] = Object.values(
       contract.paths['/chats/{chatId}/stream/'].post.responses['200'].content['text/event-stream']
         .examples,
@@ -308,17 +309,48 @@ describe('events the contract documents', () => {
     expect(isKnownChatStreamEvent(paused)).toBe(false);
   });
 
-  it('yields a guardian event without the fields the contract requires as unknown', () => {
-    const partial = event('guardian', { guardianId: 'emergency_breathing', message: 'Call now.' });
-    expect(partial).toHaveProperty('data');
-    expect(isKnownChatStreamEvent(partial)).toBe(false);
-    const wrongType = event('guardian', {
+  it('delivers a guardian event without endsConversation or category typed, with the defaults', () => {
+    const guardian = schemas.StreamChatGuardianEvent.properties;
+    expect([guardian.endsConversation.default, guardian.category.default]).toEqual([
+      false,
+      'other',
+    ]);
+
+    const bare = event('guardian', { guardianId: 'emergency_breathing', message: 'Call now.' });
+    expect(bare).toEqual({
+      type: 'guardian',
       guardianId: 'emergency_breathing',
       message: 'Call now.',
-      endsConversation: 'yes',
-      category: 'emergency',
+      endsConversation: guardian.endsConversation.default,
+      category: guardian.category.default,
     });
-    expect(isKnownChatStreamEvent(wrongType)).toBe(false);
+    if (!isKnownChatStreamEvent(bare) || bare.type !== 'guardian') {
+      throw new Error('expected a known guardian event');
+    }
+    expect(bare.endsConversation).toBe(false);
+    expect(bare.category).toBe('other');
+
+    // Only a missing field gets its default.
+    const partial = event('guardian', {
+      guardianId: 'emergency_breathing',
+      message: '',
+      endsConversation: true,
+    });
+    expect(partial).toMatchObject({ endsConversation: true, category: 'other' });
+    expect(isKnownChatStreamEvent(partial)).toBe(true);
+  });
+
+  it('still yields a guardian event as unknown when a field is the wrong type or guardianId is missing', () => {
+    for (const data of [
+      { guardianId: 'emergency_breathing', message: 'Call now.', endsConversation: 'yes' },
+      { guardianId: 'emergency_breathing', message: 'Call now.', category: null },
+      { message: 'Call now.' },
+    ]) {
+      const malformed = event('guardian', data);
+      // The unknown event carries the payload as sent, without the defaults.
+      expect(malformed).toEqual({ type: 'guardian', data: { type: 'guardian', ...data } });
+      expect(isKnownChatStreamEvent(malformed)).toBe(false);
+    }
   });
 
   it('accepts the fields the contract makes optional', () => {
