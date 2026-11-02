@@ -153,10 +153,33 @@ export interface paths {
          *     - `conversation.offtopic`: the message was classified as off-topic.
          *     - `conversation.end`: the assistant ended the conversation (`reason` explains why).
          *     - `guardian`: a safety condition was detected; `guardianId` is stable.
+         *       `title` and `text` (markdown) are the patient-facing copy: show them when present.
+         *       `message` is legacy and will be deprecated. Until a guardian has `title` and `text`:
+         *       for `safety`, show `message`, which is patient-ready; for `emergency`, show your own
+         *       emergency guidance and never `message`, which is empty or an internal label such as
+         *       "🛡️ Guardian stopped"; for `feedback`, no UI is needed; for `other`, show your own copy.
+         *       `title` and `text` are optional, so keep your own copy as a fallback.
+         *       `endsConversation` is true when this guardian ends the conversation: stop input, but keep
+         *       reading until the `conversation.end` that follows, which confirms it (if the client disconnects
+         *       first, the chat can stay open). After that, sending a message returns
+         *       `404 error.partner.chat_not_found`; start a new chat. Decide whether to stop input from
+         *       `endsConversation`, never from `category`.
+         *       `category` is `emergency`, `safety`, `feedback` or `other`. New categories may be added; treat
+         *       unknown values as `other`.
+         *       The safety gateways that screen each message report the screener that stopped it: an emergency
+         *       screener as its `emergency_*` ID, a prompt injection as `prompt_injection` (`safety`), an
+         *       uncommon message as `uncommon_message` (`other`), and any other security check as
+         *       `security_gateway` (`safety`).
+         *       A `guardianId` is sent at most once per turn unless a later event changes what to show (it
+         *       ends the conversation, or brings new copy). Treat a repeated `guardianId` in the same turn as
+         *       an update: replace the alert you showed for it rather than adding another. It keeps the
+         *       earlier `title` or `text` when it brings none of its own.
          *     - `error`: an error; the stream ends after it. `errorCode` is `error.rate_limited`
-         *       (may include `retryAfterSeconds`), `error.internal` (the reply failed; retry the turn), or
+         *       (may include `retryAfterSeconds`), `error.internal` (the reply failed; check the transcript
+         *       with `GET /chats/{chatId}/messages/` and send a new turn if appropriate), or
          *       `error.consultation_not_ready` (the consultation could not be finalized; booking is
-         *       unavailable).
+         *       unavailable). Don't resend a turn automatically after an `error` event: it may already have
+         *       produced work.
          *     - `skill_code.cta`: an end-of-flow call to action (e.g. see a Doctronic doctor, or book
          *       an in-person visit); carries `skillCode`, `widget`, and an optional `text` label.
          *     - `ai_consultation.complete`: consultation completion with document IDs. Document retrieval can still return `202` while generation finishes.
@@ -173,7 +196,8 @@ export interface paths {
          *
          *     The chat must have been created through this Doctronic API and belong to both the
          *     authenticated organization and user; otherwise it is masked as
-         *     `404 error.partner.chat_not_found`.
+         *     `404 error.partner.chat_not_found`. A chat that has ended (for example after a guardian with
+         *     `endsConversation: true`) also returns `404 error.partner.chat_not_found`.
          *
          *     **Auth:** organization Bearer token + `X-Doctronic-User-ID` header (both required).
          */
@@ -481,7 +505,96 @@ export interface paths {
         trace?: never;
     };
 }
-export type webhooks = Record<string, never>;
+export interface webhooks {
+    "appointment.call_ended": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * appointment.call_ended
+         * @description The appointment's call ended.
+         *
+         *     Sent as a signed `POST` to your webhook URL when your organization is subscribed to this event. Every attempt carries the same `eventId`, and events can arrive out of order.
+         */
+        post: operations["webhook_appointment_call_ended"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "appointment.practitioner_joined": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * appointment.practitioner_joined
+         * @description A practitioner joined the appointment's call.
+         *
+         *     Sent as a signed `POST` to your webhook URL when your organization is subscribed to this event. Every attempt carries the same `eventId`, and events can arrive out of order.
+         */
+        post: operations["webhook_appointment_practitioner_joined"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "appointment.waiting_room_ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * appointment.waiting_room_ready
+         * @description The appointment's waiting room is ready to join. Replace any `waitingRoomUrl` you stored for it earlier.
+         *
+         *     Sent as a signed `POST` to your webhook URL when your organization is subscribed to this event. Every attempt carries the same `eventId`, and events can arrive out of order.
+         */
+        post: operations["webhook_appointment_waiting_room_ready"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "artifact.ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * artifact.ready
+         * @description A consultation document is ready to retrieve with `GET /artifacts/{artifactId}/`. `userId` can be null.
+         *
+         *     Sent as a signed `POST` to your webhook URL when your organization is subscribed to this event. Every attempt carries the same `eventId`, and events can arrive out of order.
+         */
+        post: operations["webhook_artifact_ready"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export interface components {
     schemas: {
         /**
@@ -593,6 +706,12 @@ export interface components {
         };
         /** ArtifactResponse */
         ArtifactResponse: components["schemas"]["SoapNoteArtifactResponse"] | components["schemas"]["ClinicianNoteArtifactResponse"] | components["schemas"]["LongSummaryArtifactResponse"] | components["schemas"]["ShortSummaryArtifactResponse"];
+        /**
+         * ArtifactType
+         * @description Organization-retrievable consultation artifact kinds.
+         * @enum {string}
+         */
+        ArtifactType: "long_summary" | "short_summary" | "soap_note" | "clinician_note";
         /** AsapAppointmentRequest */
         AsapAppointmentRequest: {
             chatId: string;
@@ -789,13 +908,25 @@ export interface components {
             postalCode?: string | null;
         };
         /**
+         * PharmacySearchAddress
+         * @description Optional narrowing filter for the pharmacy's address, not the patient's.
+         */
+        PharmacySearchAddress: {
+            line1: string;
+            line2?: string | null;
+            city?: string | null;
+            state?: string | null;
+            postalCode?: string | null;
+        };
+        /**
          * PharmacySearchRequest
          * @description Request body for searching pharmacies, used to route any prescriptions resulting
          *     from an appointment.
          *
          *     `latitude` and `longitude` are always required. `search_term` is optional; when
          *     omitted, results are sorted by proximity to the given location. `state` optionally
-         *     filters results to a single US state.
+         *     filters results to a single US state. When `phone_number` is supplied,
+         *     search by proximity without a name filter, then compare normalized phones.
          */
         PharmacySearchRequest: {
             /** @description String to search pharmacy name by */
@@ -806,6 +937,10 @@ export interface components {
             longitude: number;
             /** @description US state code, e.g. 'NY', where the pharmacy is located. */
             state?: string | null;
+            /** @description Pharmacy phone, optionally prefixed with +1. Overrides searchTerm; filters nearby Canvas results. */
+            phoneNumber?: string | null;
+            /** @description Pharmacy address to narrow results. All supplied fields must match; line1 is required. */
+            address?: components["schemas"]["PharmacySearchAddress"] | null;
         };
         /** PharmacySearchResponse */
         PharmacySearchResponse: {
@@ -1186,6 +1321,275 @@ export interface components {
             /** @description One entry for each request validation failure. */
             data: components["schemas"]["ValidationErrorDetail"][];
         };
+        /**
+         * ConsultationArtifacts
+         * @description IDs of the consultation's documents, for `GET /artifacts/{artifactId}/`; `null` when one isn't available.
+         */
+        ConsultationArtifacts: {
+            /** @default null */
+            longSummary: string | null;
+            /** @default null */
+            shortSummary: string | null;
+            /** @default null */
+            soapNote: string | null;
+        };
+        /** @enum {string} */
+        GuardianCategory: "emergency" | "safety" | "feedback" | "other";
+        /**
+         * PartnerGuardianId
+         * @enum {string}
+         */
+        PartnerGuardianId: "emergency_acute_aortic_dissection_or_ruptured_aortic_aneurysm" | "emergency_acute_coronary_syndrome" | "emergency_breathing" | "emergency_cerebrovascular_accident_or_stroke" | "emergency_constant_bleeding" | "emergency_crushing_chest_pain" | "emergency_domestic_abuse" | "emergency_exact_words" | "emergency_harm_others" | "emergency_major_trauma" | "emergency_psychotic_event" | "emergency_seizure" | "emergency_self_harm" | "emergency_severe_abdominal_pain" | "emergency_shortness_of_breath" | "emergency_stroke" | "emergency_venomous_bite" | "emergency_worst_headache" | "agent_feedback_negative" | "agent_feedback_positive" | "check_emergency_phrase" | "check_input_language" | "custom_guardians_gateway" | "security_gateway" | "extraction_decomposition_detector" | "harmful_content_detector" | "identity_instruction_attack_detector" | "policy_violation" | "prompt_injection" | "uncommon_message" | "unified_emergency_detector";
+        /**
+         * StreamChatCTAEvent
+         * @description An end-of-flow call to action. Use `text` as its label when present.
+         */
+        StreamChatCTAEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "skill_code.cta";
+            skillCode: string;
+            /** @default null */
+            widget?: string | null;
+            /** @default null */
+            text?: string | null;
+        };
+        /**
+         * StreamChatConsultationCompleteEvent
+         * @description The consultation is complete. `artifacts` holds the IDs of its documents.
+         */
+        StreamChatConsultationCompleteEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ai_consultation.complete";
+            artifacts: components["schemas"]["ConsultationArtifacts"];
+        };
+        /**
+         * StreamChatConversationEndEvent
+         * @description The assistant ended the conversation; `reason` explains why when present.
+         */
+        StreamChatConversationEndEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.end";
+            /** @default null */
+            messageId?: string | null;
+            /** @default null */
+            reason?: string | null;
+        };
+        /**
+         * StreamChatConversationOfftopicEvent
+         * @description The user's message was classified as off-topic.
+         */
+        StreamChatConversationOfftopicEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.offtopic";
+            /** @default null */
+            messageId?: string | null;
+        };
+        /**
+         * StreamChatErrorEvent
+         * @description An error; the stream ends after it. Don't resend the turn automatically: it may already have produced work.
+         */
+        StreamChatErrorEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+            errorCode: string;
+            message: string;
+            /** @default null */
+            retryAfterSeconds?: number | null;
+        };
+        /**
+         * StreamChatGuardianEvent
+         * @description A safety condition was detected. Show `title` and `text` when present. When `endsConversation` is true, stop
+         *     input but keep reading until `conversation.end`. Treat a repeated `guardianId` in the same turn as an update.
+         */
+        StreamChatGuardianEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "guardian";
+            guardianId: components["schemas"]["PartnerGuardianId"] | string;
+            /** @default  */
+            message: string;
+            /** @default null */
+            title?: string | null;
+            /** @default null */
+            text?: string | null;
+            /** @default false */
+            endsConversation: boolean;
+            /** @default other */
+            category: components["schemas"]["GuardianCategory"] | string;
+        };
+        /**
+         * StreamChatMessageContentEvent
+         * @description A chunk of the message's text: append it to the message with the same `messageId`.
+         */
+        StreamChatMessageContentEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message.content";
+            messageId: string;
+            content: string;
+        };
+        /**
+         * StreamChatMessageStartEvent
+         * @description A message started. Its text follows in `message.content` events with the same `messageId`.
+         */
+        StreamChatMessageStartEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message.start";
+            /**
+             * @default assistant
+             * @enum {string}
+             */
+            role: "assistant" | "user";
+            messageId: string;
+            /**
+             * @description When the message started, in epoch milliseconds.
+             * @default null
+             */
+            messageTimestamp?: number | null;
+        };
+        /**
+         * StreamChatMessageStopEvent
+         * @description The message with this `messageId` is complete. The turn can go on with more messages.
+         */
+        StreamChatMessageStopEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message.stop";
+            messageId: string;
+        };
+        /**
+         * StreamChatEvent
+         * @description The JSON `data` of one event of `POST /chats/{chatId}/stream/`, keyed on `type`, which matches the SSE `event:` name. New event types may be added: ignore types you don't recognize.
+         */
+        StreamChatEvent: components["schemas"]["StreamChatMessageStartEvent"] | components["schemas"]["StreamChatMessageContentEvent"] | components["schemas"]["StreamChatMessageStopEvent"] | components["schemas"]["StreamChatConversationEndEvent"] | components["schemas"]["StreamChatConversationOfftopicEvent"] | components["schemas"]["StreamChatGuardianEvent"] | components["schemas"]["StreamChatErrorEvent"] | components["schemas"]["StreamChatCTAEvent"] | components["schemas"]["StreamChatConsultationCompleteEvent"];
+        /** AppointmentCallEndedData */
+        AppointmentCallEndedData: {
+            appointmentId: string;
+            userId: string;
+        };
+        /**
+         * AppointmentCallEndedPayload
+         * @description The appointment's call ended.
+         */
+        AppointmentCallEndedPayload: {
+            /** @description Unique ID of the event, the same on every delivery attempt. Deduplicate on it. */
+            eventId: string;
+            /**
+             * Format: date-time
+             * @description When the event happened (UTC), not when this attempt was sent.
+             */
+            occurredAt: string;
+            /**
+             * @default appointment.call_ended
+             * @constant
+             */
+            event: "appointment.call_ended";
+            data: components["schemas"]["AppointmentCallEndedData"];
+        };
+        /** AppointmentPractitionerJoinedData */
+        AppointmentPractitionerJoinedData: {
+            appointmentId: string;
+            userId: string;
+        };
+        /**
+         * AppointmentPractitionerJoinedPayload
+         * @description A practitioner joined the appointment's call.
+         */
+        AppointmentPractitionerJoinedPayload: {
+            /** @description Unique ID of the event, the same on every delivery attempt. Deduplicate on it. */
+            eventId: string;
+            /**
+             * Format: date-time
+             * @description When the event happened (UTC), not when this attempt was sent.
+             */
+            occurredAt: string;
+            /**
+             * @default appointment.practitioner_joined
+             * @constant
+             */
+            event: "appointment.practitioner_joined";
+            data: components["schemas"]["AppointmentPractitionerJoinedData"];
+        };
+        /** AppointmentWaitingRoomReadyData */
+        AppointmentWaitingRoomReadyData: {
+            appointmentId: string;
+            userId: string;
+            /**
+             * Format: uri
+             * @description HTTPS URL for joining the appointment; currently expires one hour after issuance and may rotate when reissued.
+             * @example https://dctd.co/r/example/
+             */
+            waitingRoomUrl: string;
+        };
+        /**
+         * AppointmentWaitingRoomReadyPayload
+         * @description The appointment's waiting room is ready to join. Replace any `waitingRoomUrl` you stored for it earlier.
+         */
+        AppointmentWaitingRoomReadyPayload: {
+            /** @description Unique ID of the event, the same on every delivery attempt. Deduplicate on it. */
+            eventId: string;
+            /**
+             * Format: date-time
+             * @description When the event happened (UTC), not when this attempt was sent.
+             */
+            occurredAt: string;
+            /**
+             * @default appointment.waiting_room_ready
+             * @constant
+             */
+            event: "appointment.waiting_room_ready";
+            data: components["schemas"]["AppointmentWaitingRoomReadyData"];
+        };
+        /** ArtifactReadyData */
+        ArtifactReadyData: {
+            artifactId: string;
+            artifactType: components["schemas"]["ArtifactType"];
+            chatId: string;
+            userId: string | null;
+        };
+        /**
+         * ArtifactReadyPayload
+         * @description A consultation document is ready to retrieve with `GET /artifacts/{artifactId}/`. `userId` can be null.
+         */
+        ArtifactReadyPayload: {
+            /** @description Unique ID of the event, the same on every delivery attempt. Deduplicate on it. */
+            eventId: string;
+            /**
+             * Format: date-time
+             * @description When the event happened (UTC), not when this attempt was sent.
+             */
+            occurredAt: string;
+            /**
+             * @default artifact.ready
+             * @constant
+             */
+            event: "artifact.ready";
+            data: components["schemas"]["ArtifactReadyData"];
+        };
         /** UserMessageEvent */
         UserMessageEvent: {
             /**
@@ -1387,7 +1791,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -1398,7 +1804,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Phone validation is temporarily unavailable. Retry the same request later. */
+            /** @description Phone validation is temporarily unavailable. Retry the same request later. Idempotent request coordination is temporarily unavailable before processing begins. */
             503: {
                 headers: {
                     /** @description Minimum wait in seconds before retrying with the same Idempotency-Key and request body. */
@@ -1406,12 +1812,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "code": "error.validation.phone_number.unavailable",
-                     *       "message": "Phone validation is temporarily unavailable. Retry the same request later."
-                     *     }
-                     */
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
@@ -1506,7 +1906,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -1517,7 +1919,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Phone validation is temporarily unavailable. Retry the same request later. */
+            /** @description Phone validation is temporarily unavailable. Retry the same request later. Idempotent request coordination is temporarily unavailable before processing begins. */
             503: {
                 headers: {
                     /** @description Minimum wait in seconds before retrying with the same Idempotency-Key and request body. */
@@ -1525,12 +1927,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "code": "error.validation.phone_number.unavailable",
-                     *       "message": "Phone validation is temporarily unavailable. Retry the same request later."
-                     *     }
-                     */
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
@@ -1724,7 +2120,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -1742,7 +2140,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -2182,12 +2588,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "code": "error.appointments.slot_unavailable",
-                     *       "message": "The selected slot is no longer available."
-                     *     }
-                     */
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
@@ -2222,7 +2622,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -2301,7 +2709,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -2328,7 +2738,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -2702,12 +3120,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "code": "error.appointments.cannot_be_cancelled_or_rescheduled",
-                     *       "message": "Appointment cannot be cancelled or rescheduled."
-                     *     }
-                     */
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
@@ -2727,7 +3139,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -2828,7 +3248,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -2933,7 +3361,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SuccessfulEmptyResponse"];
                 };
             };
             /** @description The request failed validation and the server returned HTTP 400. */
@@ -2996,7 +3424,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -3014,7 +3444,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -3105,7 +3543,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -3123,7 +3563,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -3151,7 +3599,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SuccessfulEmptyResponse"];
                 };
             };
             /** @description Required patient demographics (first name, last name, date of birth, sex) are missing from user record. */
@@ -3222,7 +3670,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -3240,7 +3690,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -3333,7 +3791,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Legacy FastAPI schema artifact retained for code-generation compatibility. The server returns HTTP 400, not 422, when request validation fails. */
             422: {
@@ -3351,7 +3811,15 @@ export interface operations {
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "error.idempotency.unavailable",
+                     *       "message": "Idempotent request processing is temporarily unavailable. Please retry with the same key."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -3462,6 +3930,190 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    webhook_appointment_call_ended: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Lowercase hexadecimal HMAC-SHA256 of the exact request body bytes, keyed with your webhook secret. Verify it against the raw body before parsing it, with a constant-time comparison. */
+                "X-Doctronic-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentCallEndedPayload"];
+            };
+        };
+        responses: {
+            /** @description Retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Acknowledges the delivery. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A permanent failure: the delivery isn't retried, except after a `429`. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Any other status, a network failure or a timeout is retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    webhook_appointment_practitioner_joined: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Lowercase hexadecimal HMAC-SHA256 of the exact request body bytes, keyed with your webhook secret. Verify it against the raw body before parsing it, with a constant-time comparison. */
+                "X-Doctronic-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentPractitionerJoinedPayload"];
+            };
+        };
+        responses: {
+            /** @description Retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Acknowledges the delivery. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A permanent failure: the delivery isn't retried, except after a `429`. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Any other status, a network failure or a timeout is retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    webhook_appointment_waiting_room_ready: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Lowercase hexadecimal HMAC-SHA256 of the exact request body bytes, keyed with your webhook secret. Verify it against the raw body before parsing it, with a constant-time comparison. */
+                "X-Doctronic-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentWaitingRoomReadyPayload"];
+            };
+        };
+        responses: {
+            /** @description Retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Acknowledges the delivery. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A permanent failure: the delivery isn't retried, except after a `429`. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Any other status, a network failure or a timeout is retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    webhook_artifact_ready: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Lowercase hexadecimal HMAC-SHA256 of the exact request body bytes, keyed with your webhook secret. Verify it against the raw body before parsing it, with a constant-time comparison. */
+                "X-Doctronic-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactReadyPayload"];
+            };
+        };
+        responses: {
+            /** @description Retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Acknowledges the delivery. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A permanent failure: the delivery isn't retried, except after a `429`. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Any other status, a network failure or a timeout is retried with exponential backoff while the event's retry window lasts. The window is shorter for `appointment.waiting_room_ready`, and `appointment.waiting_room_ready` and `appointment.practitioner_joined` also stop once the appointment has ended. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
