@@ -96,8 +96,7 @@ export interface paths {
          *     **Path parameters**
          *     - `chatId`: the chat id returned by `POST /chats/`.
          *
-         *     **Auth:** organization Bearer token + `X-Doctronic-User-ID` header (both required), or an embed
-         *     session token from `POST /embed/sessions/` alone (it carries its user, so no user-id header).
+         *     **Auth:** organization Bearer token + `X-Doctronic-User-ID` header (both required).
          */
         get: operations["partners_api_chats_get_chats__chatId___get"];
         put?: never;
@@ -182,8 +181,7 @@ export interface paths {
          *       unavailable). Don't resend a turn automatically after an `error` event: it may already have
          *       produced work.
          *     - `skill_code.cta`: an end-of-flow call to action (e.g. see a Doctronic doctor, or book
-         *       an in-person visit); carries `skillCode`, `widget`, and an optional `text` label. Embed chats
-         *       only get Doctronic visit CTAs when their deployment offers Doctronic visits.
+         *       an in-person visit); carries `skillCode`, `widget`, and an optional `text` label.
          *     - `ai_consultation.complete`: consultation completion with document IDs. Document retrieval can still return `202` while generation finishes.
          *
          *     **Event compatibility:** Published event names are stable wire identifiers. New event names
@@ -201,10 +199,7 @@ export interface paths {
          *     `404 error.partner.chat_not_found`. A chat that has ended (for example after a guardian with
          *     `endsConversation: true`) also returns `404 error.partner.chat_not_found`.
          *
-         *     **Auth:** organization Bearer token + `X-Doctronic-User-ID` header (both required), or an embed
-         *     session token from `POST /embed/sessions/` alone (it carries its user, so no user-id header).
-         *     While the embed deployment is paused, embed requests answer `503 error.embed.paused`, and an open
-         *     embed stream ends with an `error` event whose `errorCode` is `error.embed.paused`.
+         *     **Auth:** organization Bearer token + `X-Doctronic-User-ID` header (both required).
          */
         post: operations["partners_api_chats_stream_chats__chatId__stream__post"];
         delete?: never;
@@ -788,14 +783,6 @@ export interface components {
             /** @default UTC */
             timezone?: string;
             conversationPromptContext?: string | null;
-            /** @description Embed sessions only: the index, in `content.starterPrompts` of `GET /embed/config/`, of the starter prompt the visitor picked to start this chat. Omit it when the visitor typed their own question. */
-            starterPromptIndex?: number | null;
-        };
-        /** CreateEmbedSessionRequest */
-        CreateEmbedSessionRequest: {
-            key: string;
-            termsAccepted: boolean;
-            intake: components["schemas"]["EmbedIntakeRequest"];
         };
         /**
          * CreateUserRequest
@@ -811,113 +798,6 @@ export interface components {
             phoneNumber?: string | null;
             /** @description Sex assigned at birth, not gender */
             sex?: components["schemas"]["Sex"] | null;
-        };
-        /** EmbedConfigResponse */
-        EmbedConfigResponse: {
-            deploymentId: string;
-            partnerId: string;
-            configVersion: string;
-            allowedOrigins: string[];
-            theme: components["schemas"]["EmbedTheme"];
-            content: components["schemas"]["EmbedCopy"];
-            intake: components["schemas"]["EmbedIntake"];
-            offramps: components["schemas"]["EmbedOfframpConfig"][];
-            rating: components["schemas"]["EmbedRatingConfig"] | null;
-            hiddenArtifacts: components["schemas"]["ArtifactType"][];
-            hideSoapNote: boolean;
-            paused: boolean;
-        };
-        /** EmbedCopy */
-        EmbedCopy: {
-            title: string;
-            body: string;
-            /** @default Ask anything about your health */
-            inputPlaceholder?: string;
-            fallbackContact?: string | null;
-            subtitle?: string | null;
-            introMessage?: string | null;
-            /** @default [] */
-            starterPrompts?: components["schemas"]["EmbedStarterPrompt"][];
-        };
-        /** EmbedIntake */
-        EmbedIntake: {
-            /** @default 18 */
-            minAge?: number;
-            state?: (components["schemas"]["StateSelection"] | components["schemas"]["StateDisclaimer"]) | null;
-            roles?: string[] | null;
-            /** @default Sorry, this service isn't available to you yet. */
-            ineligibleMessage?: string;
-        };
-        /** EmbedIntakeRequest */
-        EmbedIntakeRequest: {
-            age: number;
-            sex: components["schemas"]["Sex"];
-            state?: string | null;
-            role?: string | null;
-        };
-        /** EmbedOfframpConfig */
-        EmbedOfframpConfig: {
-            kind: string;
-            label: string;
-            showWhen: components["schemas"]["EmbedOfframpTrigger"];
-        };
-        /**
-         * EmbedOfframpTrigger
-         * @description When a client shows an off-ramp. Any condition that matches shows it; once shown it stays.
-         *
-         *     Evaluated by the embed iframe from stream events; the server only serves the rule.
-         */
-        EmbedOfframpTrigger: {
-            /** @default [] */
-            ctaWidgets?: string[];
-            /** @default false */
-            onConversationEnd?: boolean;
-            afterAssistantReplies?: number | null;
-        };
-        /** EmbedRateLimitedData */
-        EmbedRateLimitedData: {
-            /** @example 60 */
-            retryAfter: number;
-        };
-        /** EmbedRatingConfig */
-        EmbedRatingConfig: {
-            scale: string;
-            min: number;
-            max: number;
-            question: string;
-            minLabel: string;
-            maxLabel: string;
-            messagePrompt: string;
-        };
-        /** EmbedSessionResponse */
-        EmbedSessionResponse: {
-            /** @description The embed session token. Opaque: send it as a Bearer token, don't parse it. */
-            token: string;
-            /** @description When the token expires, in Unix seconds on the server's clock. */
-            expiresAt: number;
-            /** @description When to refresh the token, in Unix seconds on the server's clock. */
-            refreshAfter: number;
-            /** @description Seconds from this response until the token expires. Unlike `expiresAt`, it doesn't depend on the client's clock. A replayed response (same `Idempotency-Key`) repeats the original value. */
-            expiresInSeconds: number;
-            /** @description Seconds from this response until the client should refresh the token. Unlike `refreshAfter`, it doesn't depend on the client's clock. A replayed response (same `Idempotency-Key`) repeats the original value. */
-            refreshInSeconds: number;
-            configVersion: string;
-        };
-        /**
-         * EmbedStarterPrompt
-         * @description A suggested first question on the landing. Picking it sends `message` as the visitor's first message.
-         */
-        EmbedStarterPrompt: {
-            label: string;
-            message: string;
-        };
-        /** EmbedTheme */
-        EmbedTheme: {
-            primaryColor: string;
-            secondaryColor: string;
-            headlineFont: string;
-            bodyFont: string;
-            fontStylesheetUrl?: string | null;
         };
         /**
          * ErrorResponse
@@ -937,14 +817,6 @@ export interface components {
             /** @default  */
             message?: string;
             data?: components["schemas"]["AppointmentWaitingRoomUnavailableData"] | null;
-        };
-        /** ErrorResponseWithEmbedRateLimitedData */
-        ErrorResponseWithEmbedRateLimitedData: {
-            /** @default error */
-            code?: string;
-            /** @default  */
-            message?: string;
-            data?: components["schemas"]["EmbedRateLimitedData"] | null;
         };
         /** ErrorResponseWithInsufficientScopeData */
         ErrorResponseWithInsufficientScopeData: {
@@ -983,12 +855,6 @@ export interface components {
             content: string;
             messageId: string;
             createdAt?: string | null;
-        };
-        /** OfframpLinkResponse */
-        OfframpLinkResponse: {
-            kind: string;
-            label: string;
-            url: string;
         };
         /** Page[AppointmentResponse] */
         Page_AppointmentResponse_: {
@@ -1088,11 +954,6 @@ export interface components {
             /** @description NCPDP 7-digit pharmacy ID. Obtained from `POST /pharmacy/search/`. */
             ncpdpId: string;
         };
-        /** RatingResponse */
-        RatingResponse: {
-            score: number;
-            scale: string;
-        };
         /** RescheduleAppointmentRequest */
         RescheduleAppointmentRequest: {
             /** Format: date-time */
@@ -1150,42 +1011,11 @@ export interface components {
          * @enum {string}
          */
         State: "AK" | "AL" | "AR" | "AZ" | "CA" | "CO" | "CT" | "DC" | "DE" | "FL" | "GA" | "HI" | "IA" | "ID" | "IL" | "IN" | "KS" | "KY" | "LA" | "MA" | "MD" | "ME" | "MI" | "MN" | "MO" | "MS" | "MT" | "NC" | "ND" | "NE" | "NH" | "NJ" | "NM" | "NV" | "NY" | "OH" | "OK" | "OR" | "PA" | "RI" | "SC" | "SD" | "TN" | "TX" | "UT" | "VA" | "VT" | "WA" | "WI" | "WV" | "WY";
-        /**
-         * StateDisclaimer
-         * @description The terms step shows `text`, which names the states served. No state is collected or enforced.
-         */
-        StateDisclaimer: {
-            states: components["schemas"]["State"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            mode: "disclaimer";
-            text: string;
-        };
-        /**
-         * StateSelection
-         * @description The visitor picks a state from `states`; the server rejects any other.
-         */
-        StateSelection: {
-            states: components["schemas"]["State"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            mode: "selection";
-            ineligibleMessage: string;
-            question?: string | null;
-        };
         /** StreamChatRequest */
         StreamChatRequest: {
             userEvent: components["schemas"]["UserMessageEvent"];
             /** @default UTC */
             timezone?: string;
-        };
-        /** SubmitRatingRequest */
-        SubmitRatingRequest: {
-            score: number;
         };
         /** SuccessResponseForAddressResponse */
         SuccessResponseForAddressResponse: {
@@ -1292,51 +1122,6 @@ export interface components {
             /** @description Response data */
             data: components["schemas"]["ChatResponse"];
         };
-        /** SuccessResponseForEmbedConfigResponse */
-        SuccessResponseForEmbedConfigResponse: {
-            /**
-             * @description Success code
-             * @default success
-             */
-            code?: string;
-            /**
-             * @description Success message
-             * @default Request successful
-             */
-            message?: string;
-            /** @description Response data */
-            data: components["schemas"]["EmbedConfigResponse"];
-        };
-        /** SuccessResponseForEmbedSessionResponse */
-        SuccessResponseForEmbedSessionResponse: {
-            /**
-             * @description Success code
-             * @default success
-             */
-            code?: string;
-            /**
-             * @description Success message
-             * @default Request successful
-             */
-            message?: string;
-            /** @description Response data */
-            data: components["schemas"]["EmbedSessionResponse"];
-        };
-        /** SuccessResponseForOfframpLinkResponse */
-        SuccessResponseForOfframpLinkResponse: {
-            /**
-             * @description Success code
-             * @default success
-             */
-            code?: string;
-            /**
-             * @description Success message
-             * @default Request successful
-             */
-            message?: string;
-            /** @description Response data */
-            data: components["schemas"]["OfframpLinkResponse"];
-        };
         /** SuccessResponseForPage[AppointmentResponse] */
         SuccessResponseForPage_AppointmentResponse_: {
             /**
@@ -1397,21 +1182,6 @@ export interface components {
             /** @description Response data */
             data: components["schemas"]["PharmacySearchResponse"];
         };
-        /** SuccessResponseForRatingResponse */
-        SuccessResponseForRatingResponse: {
-            /**
-             * @description Success code
-             * @default success
-             */
-            code?: string;
-            /**
-             * @description Success message
-             * @default Request successful
-             */
-            message?: string;
-            /** @description Response data */
-            data: components["schemas"]["RatingResponse"];
-        };
         /** SuccessResponseForScheduledAppointmentResponse */
         SuccessResponseForScheduledAppointmentResponse: {
             /**
@@ -1464,10 +1234,6 @@ export interface components {
             message?: string;
             /** @description Response data */
             data?: null;
-        };
-        /** UpdateRatingMessageRequest */
-        UpdateRatingMessageRequest: {
-            message: string | null;
         };
         /**
          * UpdateUserRequest
@@ -2367,26 +2133,6 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Too many requests right now. Please wait a moment and try again. Sent for embed session tokens only. */
-            429: {
-                headers: {
-                    /** @description Seconds to wait before retrying. */
-                    "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "code": "error.embed.rate_limited",
-                     *       "message": "Too many requests right now. Please wait a moment and try again.",
-                     *       "data": {
-                     *         "retryAfter": 60
-                     *       }
-                     *     }
-                     */
-                    "application/json": unknown;
-                };
-            };
             /** @description Idempotent request coordination is temporarily unavailable before processing begins. */
             503: {
                 headers: {
@@ -2492,26 +2238,6 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Too many requests right now. Please wait a moment and try again. Sent for embed session tokens only. */
-            429: {
-                headers: {
-                    /** @description Seconds to wait before retrying. */
-                    "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "code": "error.embed.rate_limited",
-                     *       "message": "Too many requests right now. Please wait a moment and try again.",
-                     *       "data": {
-                     *         "retryAfter": 60
-                     *       }
-                     *     }
-                     */
-                    "application/json": unknown;
-                };
-            };
         };
     };
     partners_api_chats_messages_chats__chatId__messages__get: {
@@ -2605,26 +2331,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Too many requests right now. Please wait a moment and try again. Sent for embed session tokens only. */
-            429: {
-                headers: {
-                    /** @description Seconds to wait before retrying. */
-                    "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "code": "error.embed.rate_limited",
-                     *       "message": "Too many requests right now. Please wait a moment and try again.",
-                     *       "data": {
-                     *         "retryAfter": 60
-                     *       }
-                     *     }
-                     */
-                    "application/json": unknown;
                 };
             };
         };
@@ -2726,26 +2432,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Too many requests right now. Please wait a moment and try again. Sent for embed session tokens only. */
-            429: {
-                headers: {
-                    /** @description Seconds to wait before retrying. */
-                    "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "code": "error.embed.rate_limited",
-                     *       "message": "Too many requests right now. Please wait a moment and try again.",
-                     *       "data": {
-                     *         "retryAfter": 60
-                     *       }
-                     *     }
-                     */
-                    "application/json": unknown;
                 };
             };
             /** @description Chat streaming is temporarily unavailable. Please retry shortly. */

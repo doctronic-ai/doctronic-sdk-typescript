@@ -55,13 +55,8 @@ The pinned contract (`info.version` 1.0.0) also brings:
   `error.idempotency.concurrent_request`, and list `concurrent_request` as retryable. A
   `409 payload_mismatch`, a key reused with a different body, is no longer retried.
   `concurrent_request`, and a `409` without a code, still are.
-- `CreateChatParams` has an optional `starterPromptIndex`, and `PharmacySearchParams` optional
-  `phoneNumber` and `address`.
+- `PharmacySearchParams` has optional `phoneNumber` and `address`.
 - `address.set()` and `pharmacy.set()` resolve to `null`, not `unknown`.
-- `POST /chats/`, `GET /chats/{chatId}/`, `GET /chats/{chatId}/messages/`, and the stream document
-  `429`.
-- Seven browser-only `/embed/` operations are skipped, because they don't take the organization's
-  API token.
 
 ## 0.1.1
 

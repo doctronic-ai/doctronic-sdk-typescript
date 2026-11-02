@@ -72,34 +72,17 @@ describe('the pinned contract', () => {
     expect(generated).toEqual(operations);
   });
 
-  it('skips only the browser-only embed operations', () => {
-    expect(sdkContract(pinned).skipped).toEqual([
-      'GET /embed/config/',
-      'POST /embed/sessions/',
-      'POST /embed/sessions/refresh/',
-      'GET /embed/chats/{chatId}/offramps/{kind}/',
-      'GET /embed/go/{ref}/',
-      'POST /embed/chats/{chatId}/rating/',
-      'PATCH /embed/chats/{chatId}/rating/',
-    ]);
-  });
-
-  it('is returned unchanged when there is nothing to skip', () => {
-    const orgOnly = copy(pinned);
-    for (const path of Object.keys(orgOnly.paths as Json)) {
-      if (path.startsWith('/embed/')) delete orgOnly.paths[path];
-    }
-    const { contract, skipped } = sdkContract(orgOnly);
+  it('has no operations to skip', () => {
+    const { contract, skipped } = sdkContract(pinned);
     expect(skipped).toEqual([]);
-    expect(contract).toBe(orgOnly);
+    expect(contract).toBe(pinned);
   });
 });
 
 describe('operations without the organization token', () => {
   it('are skipped', () => {
     const { contract, skipped } = sdkContract(withSessionOperations(pinned));
-    const before = sdkContract(pinned).skipped;
-    expect(skipped.filter((key) => !before.includes(key))).toEqual([
+    expect(skipped).toEqual([
       'DELETE /chats/',
       'HEAD /chats/',
       'OPTIONS /chats/',
