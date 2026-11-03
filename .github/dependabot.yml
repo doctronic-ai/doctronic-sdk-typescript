@@ -9,8 +9,8 @@ updates:
     cooldown:
       default-days: 14
     ignore:
-      # The SDK supports Node >= 20 ("engines" in package.json), so the Node types stay on
-      # major 20. Minor and patch updates still come through.
+      # The SDK supports Node >= 22 ("engines" in package.json), so the Node types stay on
+      # major 22. Minor and patch updates still come through.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
       # A TypeScript major needs openapi-typescript, typescript-eslint and tsup to support it
