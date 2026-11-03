@@ -1,5 +1,5 @@
 # Updates the pinned contract (openapi/doctronic-v1.json) from the published one, regenerates
-# src/generated/, runs the checks, and opens or updates a pull request with the result.
+# src/generated/ and packages/browser/src/generated/, runs the checks, and opens or updates a pull request with the result.
 #
 # The `regenerate` job runs npm and the repository's code with read-only access. Only the
 # `pull-request` job can write, and it runs no npm code: it applies the regenerated files and
@@ -194,13 +194,13 @@ jobs:
       - name: Look for changes
         id: changes
         run: |
-          git add --intent-to-add openapi src/generated
-          if git diff --quiet -- openapi src/generated; then
+          git add --intent-to-add openapi src/generated packages/browser/src/generated
+          if git diff --quiet -- openapi src/generated packages/browser/src/generated; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No changes: openapi/doctronic-v1.json already matches the published contract." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat -- openapi src/generated
+            git diff --stat -- openapi src/generated packages/browser/src/generated
           fi
 
       - name: Write the pull request body
@@ -216,7 +216,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/regenerated/files"
           actual="$(sha256sum openapi/doctronic-v1.json | cut -d' ' -f1)"
           {
-            echo "This automated pull request updates \`openapi/doctronic-v1.json\` to the contract published at $CONTRACT_URL (sha256 \`$actual\`) and regenerates \`src/generated/\`. It changes nothing else."
+            echo "This automated pull request updates \`openapi/doctronic-v1.json\` to the contract published at $CONTRACT_URL (sha256 \`$actual\`) and regenerates \`src/generated/\` and \`packages/browser/src/generated/\`. It changes nothing else."
             echo
             case "$EVENT_NAME" in
               repository_dispatch)
@@ -253,7 +253,7 @@ jobs:
               echo "</details>"
             fi
           } > "$RUNNER_TEMP/regenerated/pull-request-body.md"
-          cp -R --parents openapi/doctronic-v1.json src/generated "$RUNNER_TEMP/regenerated/files/"
+          cp -R --parents openapi/doctronic-v1.json src/generated packages/browser/src/generated "$RUNNER_TEMP/regenerated/files/"
 
       - name: Upload the regenerated files
         if: steps.changes.outputs.changed == 'true'
@@ -395,6 +395,7 @@ jobs:
           add-paths: |
             openapi/doctronic-v1.json
             src/generated/**
+            packages/browser/src/generated/**
 
       # Only ever added here. The previous step carries it over from the open pull request.
       - name: Label a breaking change

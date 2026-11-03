@@ -80,6 +80,7 @@ jobs:
   # Deterministic: compares with the committed copy of the contract, never the network.
   # contract-drift.yml compares that copy with the published contract on a schedule, and
   # regenerate.yml opens a pull request when the published one changes.
+  # Covers both packages: the server SDK's src/generated/ and the browser package's.
   codegen:
     name: Codegen matches the pinned contract
     runs-on: ubuntu-latest
@@ -100,9 +101,9 @@ jobs:
         run: npm ci
 
       - name: Regenerate from the pinned contract
-        run: npm run generate -- --contract openapi/doctronic-v1.json
+        run: npm run generate -- --contract openapi/doctronic-v1.json --profile all
 
       - name: Fail if the committed output differs
         run: |
-          git add --intent-to-add src/generated
-          git diff --exit-code -- src/generated
+          git add --intent-to-add src/generated packages/browser/src/generated
+          git diff --exit-code -- src/generated packages/browser/src/generated

@@ -54,7 +54,7 @@ jobs:
           fi
 
           npm run generate -- --contract "$RUNNER_TEMP/published.json"
-          git add --intent-to-add src/generated
+          git add --intent-to-add src/generated packages/browser/src/generated
           {
             echo "## Contract drift"
             echo
@@ -65,11 +65,11 @@ jobs:
             echo "### Generated code"
             echo
             echo '```'
-            git diff --stat -- src/generated
+            git diff --stat -- src/generated packages/browser/src/generated
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if git diff --quiet -- src/generated; then
+          if git diff --quiet -- src/generated packages/browser/src/generated; then
             echo "::warning::The published contract differs from openapi/doctronic-v1.json, but the generated code doesn't change. Run regenerate.yml to update the pinned copy."
           else
             echo "::error::The published contract changes the generated code. Run regenerate.yml, or merge its open pull request."
