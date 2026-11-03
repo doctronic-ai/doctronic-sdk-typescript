@@ -50,6 +50,10 @@ the contract or the generator instead. CI regenerates it and fails on any differ
 `npm run generate` reads `openapi/doctronic-v1.json`, a pinned copy of the contract the docs
 publish at https://docs.doctronic.ai/openapi/doctronic-v1.json. It generates only operations that
 take the organization's API token, and lists the ones it skips, such as browser-only operations.
+On the operations it keeps, it also leaves out what only another credential gets, such as the
+responses and request fields the contract documents for embed session tokens only, and the
+components that only skipped parts use. So the generated code is the same whether or not the
+contract includes the embed API.
 The generator is `scripts/generate.mjs`, and its reading of the contract is in
 `scripts/contract.mjs`, with tests in `test/contract.test.ts`.
 

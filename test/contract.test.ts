@@ -36,6 +36,14 @@ const copy = (contract: Contract): Json => structuredClone<Json>(contract);
 const describe_ = (contract: Contract): OperationDescription[] =>
   describeOperations(sdkContract(contract).contract);
 const byKey = (contract: Contract) => new Map(describe_(contract).map((op) => [op.key, op]));
+// The types, with the same options as scripts/generate.mjs.
+const generateSchema = async (contract: Contract): Promise<string> =>
+  astToString(
+    await openapiTS(sdkContract(contract).contract as never, {
+      defaultNonNullable: false,
+      silent: true,
+    }),
+  );
 
 // Operations that don't take the organization's token, like the browser-only ones the contract
 // is adding: a session token of their own, no token at all, or an alternative to the org token.
@@ -72,9 +80,10 @@ describe('the pinned contract', () => {
     expect(generated).toEqual(operations);
   });
 
-  it('has no operations to skip', () => {
-    const { contract, skipped } = sdkContract(pinned);
+  it('has nothing to leave out', () => {
+    const { contract, skipped, trimmed } = sdkContract(pinned);
     expect(skipped).toEqual([]);
+    expect(Object.values(trimmed).flat()).toEqual([]);
     expect(contract).toBe(pinned);
   });
 });
@@ -98,22 +107,162 @@ describe('operations without the organization token', () => {
   it('leave the output for the other operations unchanged', async () => {
     const extended = withSessionOperations(pinned);
     expect(describe_(extended)).toEqual(describe_(pinned));
-
-    // The same options as scripts/generate.mjs.
-    const generate = async (contract: Contract) =>
-      astToString(
-        await openapiTS(sdkContract(contract).contract as never, {
-          defaultNonNullable: false,
-          silent: true,
-        }),
-      );
-    expect(await generate(extended)).toBe(await generate(pinned));
+    expect(await generateSchema(extended)).toBe(await generateSchema(pinned));
   });
 
   it('fail the generator when the contract has no org token scheme', () => {
     const broken = copy(pinned);
     delete broken.components.securitySchemes.HTTPBearer;
     expect(() => sdkContract(broken)).toThrow(/HTTPBearer/);
+  });
+});
+
+// The embed API as the unhidden contract describes it, added to the pinned one: browser-only
+// operations on their own session token, the components only they use, and what the chat
+// operations document for that token alone.
+const EMBED_OPERATIONS = [
+  'GET /embed/config/',
+  'POST /embed/sessions/',
+  'POST /embed/sessions/refresh/',
+];
+const CHAT_OPERATIONS: [string, string][] = [
+  ['/chats/', 'post'],
+  ['/chats/{chatId}/', 'get'],
+  ['/chats/{chatId}/messages/', 'get'],
+  ['/chats/{chatId}/stream/', 'post'],
+];
+const EMBED_COMPONENTS = [
+  '#/components/schemas/CreateEmbedSessionRequest',
+  '#/components/schemas/EmbedConfigResponse',
+  '#/components/schemas/EmbedIntakeRequest',
+  '#/components/schemas/EmbedSessionResponse',
+  '#/components/responses/EmbedRateLimited',
+];
+
+function withEmbed(contract: Contract): Json {
+  const next = copy(contract);
+  const schemas = next.components.schemas as Json;
+  next.components.securitySchemes.EmbedSessionToken = { type: 'http', scheme: 'bearer' };
+  const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+  const ok = (schema: Json) => ({
+    description: 'OK',
+    content: { 'application/json': { schema } },
+  });
+  schemas.EmbedIntakeRequest = { type: 'object', properties: { state: ref('State') } };
+  schemas.CreateEmbedSessionRequest = {
+    type: 'object',
+    required: ['key', 'intake'],
+    properties: { key: { type: 'string' }, intake: ref('EmbedIntakeRequest') },
+  };
+  schemas.EmbedSessionResponse = { type: 'object', properties: { token: { type: 'string' } } };
+  // Uses a component the SDK's operations use too, which stays.
+  schemas.EmbedConfigResponse = { type: 'object', properties: { states: ref('State') } };
+  next.paths['/embed/config/'] = {
+    get: { security: [], responses: { '200': ok(ref('EmbedConfigResponse')) } },
+  };
+  next.paths['/embed/sessions/'] = {
+    post: {
+      security: [],
+      requestBody: {
+        content: { 'application/json': { schema: ref('CreateEmbedSessionRequest') } },
+      },
+      responses: { '200': ok(ref('EmbedSessionResponse')) },
+    },
+  };
+  next.paths['/embed/sessions/refresh/'] = {
+    post: {
+      security: [{ EmbedSessionToken: [] }],
+      responses: { '200': ok(ref('EmbedSessionResponse')) },
+    },
+  };
+
+  const rateLimited = {
+    description: 'Too many requests right now. Sent for embed session tokens only.',
+    headers: { 'Retry-After': { schema: { type: 'integer', minimum: 1 } } },
+    content: {
+      'application/json': {
+        example: { code: 'error.embed.rate_limited', message: 'Too many requests right now.' },
+      },
+    },
+  };
+  next.components.responses.EmbedRateLimited = rateLimited;
+  for (const [index, [path, method]] of CHAT_OPERATIONS.entries()) {
+    const operation = next.paths[path][method] as Json;
+    for (const field of ['security', 'x-doctronic-runtime-security']) {
+      operation[field] = [...(operation[field] as unknown[]), { EmbedSessionToken: [] }];
+    }
+    // Inline on some operations, a $ref on the others.
+    operation.responses['429'] =
+      index % 2
+        ? { $ref: '#/components/responses/EmbedRateLimited' }
+        : structuredClone(rateLimited);
+  }
+  for (const path of ['/chats/{chatId}/', '/chats/{chatId}/stream/']) {
+    const operation = next.paths[path][path.endsWith('stream/') ? 'post' : 'get'] as Json;
+    operation.description = (operation.description as string).replace(
+      '(both required).',
+      '(both required), or an embed\nsession token from `POST /embed/sessions/` alone (it carries ' +
+        'its user, so no user-id header).',
+    );
+  }
+  const stream = next.paths['/chats/{chatId}/stream/'].post as Json;
+  stream.description = (stream.description as string).replace(
+    'optional `text` label.',
+    'optional `text` label. Embed chats\nonly get Doctronic visit CTAs when their deployment ' +
+      'offers Doctronic visits.',
+  );
+  stream.description +=
+    '\nWhile the embed deployment is paused, embed requests answer `503`, and ' +
+    'an open\nembed stream ends with an `error` event whose `errorCode` is `error.embed.paused`.';
+  (schemas.CreateChatRequest as Json).properties.starterPromptIndex = {
+    anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }],
+    description: 'Embed sessions only: the starter prompt the visitor picked.',
+  };
+  return next;
+}
+
+describe('a contract with the embed API', () => {
+  it('skips exactly the embed operations', () => {
+    expect(sdkContract(withEmbed(pinned)).skipped).toEqual(EMBED_OPERATIONS);
+  });
+
+  it('generates the same code as the pinned contract', async () => {
+    const embed = withEmbed(pinned);
+    expect(describe_(embed)).toEqual(describe_(pinned));
+    const { contract } = sdkContract(embed);
+    expect(describeStreamEvents(contract)).toEqual(describeStreamEvents(pinned));
+    expect(describeWebhooks(contract)).toEqual(describeWebhooks(pinned));
+    expect(await generateSchema(embed)).toBe(await generateSchema(pinned));
+  });
+
+  it('leaves out what only the embed session token gets', () => {
+    const keys = CHAT_OPERATIONS.map(([path, method]) => `${method.toUpperCase()} ${path}`);
+    const { contract, trimmed } = sdkContract(withEmbed(pinned));
+    const { components, ...parts } = trimmed;
+    expect(parts).toEqual({
+      alternatives: keys,
+      responses: keys.map((key) => `429 ${key}`),
+      fields: ['CreateChatRequest.starterPromptIndex'],
+      descriptions: ['GET /chats/{chatId}/', 'POST /chats/{chatId}/stream/'],
+    });
+    expect([...components].sort()).toEqual([...EMBED_COMPONENTS].sort());
+    const paths = contract.paths as Json;
+    for (const [path, method] of CHAT_OPERATIONS) {
+      expect(paths[path][method].security).toEqual([{ HTTPBearer: [], XDoctronicUserID: [] }]);
+      expect(paths[path][method]['x-doctronic-runtime-security']).toEqual([
+        { HTTPBearer: [], XDoctronicUserID: [] },
+      ]);
+    }
+  });
+
+  it('keeps components that nothing referenced, and leaves its input alone', () => {
+    const embed = withEmbed(pinned);
+    embed.components.schemas.Unreferenced = { type: 'string' };
+    const before = structuredClone(embed);
+    const { contract } = sdkContract(embed);
+    expect((contract.components as Json).schemas.Unreferenced).toEqual({ type: 'string' });
+    expect((contract.components as Json).schemas.State).toBeDefined();
+    expect(embed).toEqual(before);
   });
 });
 

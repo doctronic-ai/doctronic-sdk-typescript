@@ -56,32 +56,150 @@ function orgRequirements(contract, operation) {
   return security.filter((requirement) => Object.hasOwn(requirement ?? {}, ORG_TOKEN_SCHEME));
 }
 
+// The extension that lists an operation's security as the server checks it at runtime, next to
+// `security`. The SDK keeps only its organization-token alternatives too.
+const RUNTIME_SECURITY_EXTENSION = 'x-doctronic-runtime-security';
+
+// What only embed session tokens get on operations that also take the organization's token. The
+// contract marks these only in prose, so the rules match what the docs' `hideEmbed`
+// (doctronic-developer-docs, scripts/openapi-normalization.mjs) removes before publishing: keep
+// the two in step.
+const EMBED_ONLY = {
+  /** A response whose description says only embed session tokens get it. */
+  response: /Sent for embed session tokens only\./,
+  /** Request fields, by component, that only embed sessions send. */
+  fields: { CreateChatRequest: ['starterPromptIndex'] },
+  /** Sentences about embed in the descriptions of operations the SDK keeps. */
+  prose: [
+    [/,\s+or an embed\s+session token from `POST \/embed\/sessions\/` alone \([^)]*\)\./g, '.'],
+    [
+      /\s+Embed chats\s+only get Doctronic visit CTAs when their deployment offers Doctronic visits\./g,
+      '',
+    ],
+    [
+      /\n+While the embed deployment is paused, [\s\S]*?whose `errorCode` is `error\.embed\.paused`\./g,
+      '',
+    ],
+  ],
+};
+
+// The `#/components/...` refs anywhere under `node`.
+function componentRefs(node, refs = new Set()) {
+  if (Array.isArray(node)) node.forEach((child) => componentRefs(child, refs));
+  else if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === '$ref' && typeof value === 'string' && value.startsWith('#/components/')) {
+        refs.add(value);
+      } else componentRefs(value, refs);
+    }
+  }
+  return refs;
+}
+
+// Every component the paths, webhooks, and extensions reach, directly or through other
+// components.
+function reachableComponents(contract) {
+  const document = Object.fromEntries(
+    Object.entries(contract).filter(([key]) => key !== 'components'),
+  );
+  const reached = new Set();
+  const pending = [...componentRefs(document)];
+  while (pending.length) {
+    const ref = pending.pop();
+    if (reached.has(ref)) continue;
+    reached.add(ref);
+    pending.push(...componentRefs(resolveRef(contract, { $ref: ref })));
+  }
+  return reached;
+}
+
+// Removes, in place, what only other credentials get from an operation the SDK keeps. Records
+// each removal in `trimmed` under the operation's key.
+function trimOperation(contract, key, operation, trimmed) {
+  for (const field of ['security', RUNTIME_SECURITY_EXTENSION]) {
+    if (!Array.isArray(operation[field])) continue;
+    const kept = operation[field].filter((requirement) =>
+      Object.hasOwn(requirement ?? {}, ORG_TOKEN_SCHEME),
+    );
+    if (kept.length === operation[field].length) continue;
+    operation[field] = kept;
+    if (!trimmed.alternatives.includes(key)) trimmed.alternatives.push(key);
+  }
+  for (const [status, response] of Object.entries(operation.responses ?? {})) {
+    if (EMBED_ONLY.response.test(resolveRef(contract, response)?.description ?? '')) {
+      delete operation.responses[status];
+      trimmed.responses.push(`${status} ${key}`);
+    }
+  }
+  if (typeof operation.description === 'string') {
+    const description = EMBED_ONLY.prose.reduce(
+      (text, [pattern, replacement]) => text.replace(pattern, replacement),
+      operation.description,
+    );
+    if (description !== operation.description) {
+      operation.description = description;
+      trimmed.descriptions.push(key);
+    }
+  }
+}
+
 /**
  * The part of the contract the SDK covers: every operation that takes the organization's token.
  * Others, such as browser-only operations that take a session token or no token at all, are left
- * out of the paths. Components stay, because the SDK's own types may use any of them.
+ * out of the paths. So is what only other credentials get on the operations kept: their security
+ * alternatives without the organization's token, and the responses, request fields, and prose
+ * the contract documents for embed session tokens only. Components that only the parts left out
+ * use are left out too; the rest stay, because the SDK's own types may use any of them.
  *
- * Returns the trimmed contract and the `METHOD /path` keys it left out. With nothing to leave out,
- * it returns the contract unchanged.
+ * Returns the trimmed contract, the `METHOD /path` keys it left out (`skipped`), and the other
+ * parts it left out (`trimmed`). With nothing to leave out, it returns the contract unchanged.
  */
 export function sdkContract(contract) {
   if (!Object.hasOwn(contract.components?.securitySchemes ?? {}, ORG_TOKEN_SCHEME)) {
     throw new Error(`The contract has no ${ORG_TOKEN_SCHEME} security scheme.`);
   }
+  const next = structuredClone(contract);
   const paths = {};
   const skipped = [];
-  for (const [path, rawItem] of Object.entries(contract.paths ?? {})) {
-    const item = resolveRef(contract, rawItem);
-    const skip = ALL_METHODS.filter(
-      (method) => item[method] && orgRequirements(contract, item[method]).length === 0,
-    );
+  const trimmed = { alternatives: [], responses: [], fields: [], descriptions: [], components: [] };
+  for (const [path, rawItem] of Object.entries(next.paths ?? {})) {
+    const item = resolveRef(next, rawItem);
+    const present = ALL_METHODS.filter((method) => item[method]);
+    const skip = present.filter((method) => orgRequirements(next, item[method]).length === 0);
     skipped.push(...skip.map((method) => `${method.toUpperCase()} ${path}`));
+    for (const method of present.filter((method) => !skip.includes(method))) {
+      trimOperation(next, `${method.toUpperCase()} ${path}`, item[method], trimmed);
+    }
     if (skip.length === 0) paths[path] = rawItem;
-    else if (ALL_METHODS.some((method) => item[method] && !skip.includes(method))) {
+    else if (present.length > skip.length) {
       paths[path] = Object.fromEntries(Object.entries(item).filter(([key]) => !skip.includes(key)));
     }
   }
-  return { contract: skipped.length ? { ...contract, paths } : contract, skipped };
+  next.paths = paths;
+
+  for (const [component, fields] of Object.entries(EMBED_ONLY.fields)) {
+    const schema = next.components?.schemas?.[component];
+    for (const field of fields) {
+      if (!Object.hasOwn(schema?.properties ?? {}, field)) continue;
+      delete schema.properties[field];
+      if (Array.isArray(schema.required)) {
+        schema.required = schema.required.filter((name) => name !== field);
+      }
+      trimmed.fields.push(`${component}.${field}`);
+    }
+  }
+
+  // A component that nothing referenced before stays.
+  const reachable = reachableComponents(next);
+  for (const ref of reachableComponents(contract)) {
+    if (reachable.has(ref)) continue;
+    const [, , type, name] = ref.split('/');
+    delete next.components[type][name];
+    trimmed.components.push(ref);
+  }
+
+  const changed = skipped.length || Object.values(trimmed).some((parts) => parts.length);
+  return { contract: changed ? next : contract, skipped, trimmed };
 }
 
 function errorCodes(contract, response) {
