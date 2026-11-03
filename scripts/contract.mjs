@@ -102,15 +102,19 @@ function profileOf(name) {
 
 const securityOf = (contract, operation) => operation.security ?? contract.security ?? [];
 const takesScheme = (requirement, scheme) => Object.hasOwn(requirement ?? {}, scheme);
-// No requirement names a scheme: anyone can call the operation.
-const isPublic = (security) =>
-  security.every((requirement) => Object.keys(requirement ?? {}).length === 0);
+// An empty requirement, `{}`, lets anyone call the operation; so does an empty `security`.
+const isAnonymous = (requirement) => Object.keys(requirement ?? {}).length === 0;
+
+// Whether a security alternative is one the profile keeps: its own scheme, or no credential when
+// the profile covers public operations.
+const keepsRequirement = (requirement, profile) =>
+  takesScheme(requirement, profile.scheme) || (profile.public && isAnonymous(requirement));
 
 // Whether the profile generates the operation.
 function inProfile(contract, operation, profile) {
   const security = securityOf(contract, operation);
-  if (security.some((requirement) => takesScheme(requirement, profile.scheme))) return true;
-  return profile.public && isPublic(security);
+  if (security.some((requirement) => keepsRequirement(requirement, profile))) return true;
+  return profile.public && security.length === 0;
 }
 
 // The extension that lists an operation's security as the server checks it at runtime, next to
@@ -183,7 +187,7 @@ function allComponents(contract) {
 function trimOperation(contract, key, operation, trimmed, profile) {
   for (const field of ['security', RUNTIME_SECURITY_EXTENSION]) {
     if (!Array.isArray(operation[field])) continue;
-    const kept = operation[field].filter((requirement) => takesScheme(requirement, profile.scheme));
+    const kept = operation[field].filter((requirement) => keepsRequirement(requirement, profile));
     if (kept.length === operation[field].length) continue;
     operation[field] = kept;
     if (!trimmed.alternatives.includes(key)) trimmed.alternatives.push(key);

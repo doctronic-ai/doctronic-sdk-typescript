@@ -564,6 +564,22 @@ describe('the browser profile', () => {
     expect(keys).not.toContain('OPTIONS /chats/');
   });
 
+  it('keeps the anonymous alternative of an operation where a credential is optional', () => {
+    const next = copy(pinned);
+    next.paths['/embed/config/'].get.security = [{}, { HTTPBearer: [] }];
+    next.paths['/embed/chats/{chatId}/rating/'].post.security = [{}, { EmbedSessionToken: [] }];
+    const { contract } = browserContract(next);
+    const paths = contract.paths as Json;
+    expect(paths['/embed/config/'].get.security).toEqual([{}]);
+    expect(paths['/embed/chats/{chatId}/rating/'].post.security).toEqual([
+      {},
+      { EmbedSessionToken: [] },
+    ]);
+    const described = new Map(describeOperations(contract, 'browser').map((op) => [op.key, op]));
+    expect(described.get('GET /embed/config/')?.sessionToken).toBe(false);
+    expect(described.get('POST /embed/chats/{chatId}/rating/')?.sessionToken).toBe(true);
+  });
+
   it(`fails without the ${EMBED_SESSION_SCHEME} scheme, and the server profile still works`, () => {
     const next = copy(pinned);
     delete next.components.securitySchemes[EMBED_SESSION_SCHEME];

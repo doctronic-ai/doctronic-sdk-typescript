@@ -57,7 +57,7 @@ const OUTPUTS = {
     outDir: resolve(root, 'packages/browser/src/generated'),
     select: browserContract,
     skippedReason: 'need a credential other than an embed session token',
-    credentialField: `  /** The operation takes the embed session token. Without it, the operation is public. */
+    credentialField: `  /** The operation takes the embed session token. False when it takes no credential at all. */
   readonly sessionToken: boolean;`,
   },
 };

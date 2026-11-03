@@ -9,7 +9,7 @@ export interface OperationSpec {
   readonly path: string;
   /** The operation declares an `Idempotency-Key` header. */
   readonly idempotent: boolean;
-  /** The operation takes the embed session token. Without it, the operation is public. */
+  /** The operation takes the embed session token. False when it takes no credential at all. */
   readonly sessionToken: boolean;
   /** The operation responds with `text/event-stream`. */
   readonly stream: boolean;
