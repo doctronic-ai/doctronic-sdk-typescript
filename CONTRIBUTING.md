@@ -113,6 +113,13 @@ on every run.
 
 ## Releases
 
-Maintainers release from a `vX.Y.Z` tag on `main`. `.github/workflows/release.yml` checks the
-version and the CHANGELOG entry, publishes to npm through trusted publishing, and creates the
-GitHub Release. Its header lists what a release needs.
+Each package releases on its own, from its own tags on `main`:
+
+| Package                 | Tag              | Workflow                                | CHANGELOG                                                      |
+| ----------------------- | ---------------- | --------------------------------------- | -------------------------------------------------------------- |
+| `@doctronic-ai/sdk`     | `vX.Y.Z`         | `.github/workflows/release.yml`         | [CHANGELOG.md](CHANGELOG.md)                                   |
+| `@doctronic-ai/browser` | `browser/vX.Y.Z` | `.github/workflows/release-browser.yml` | [packages/browser/CHANGELOG.md](packages/browser/CHANGELOG.md) |
+
+Each workflow checks the version against its package's `package.json` and the entry in its
+CHANGELOG, publishes to npm through trusted publishing, and creates the GitHub Release. Each one's
+header lists what a release needs.

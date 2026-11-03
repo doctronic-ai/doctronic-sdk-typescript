@@ -1,0 +1,179 @@
+# Publishes @doctronic-ai/browser (packages/browser/) to npm when a browser/vX.Y.Z tag is pushed,
+# then creates the tag's GitHub Release from packages/browser/CHANGELOG.md. The publish job stops
+# unless the tag matches packages/browser/package.json's version, points at a commit on main, and
+# has a CHANGELOG entry, and unless the tarball holds exactly the expected files. A version with a
+# prerelease part, like 0.2.0-beta.1, is published under the `next` dist-tag and marked as a
+# prerelease on GitHub.
+#
+# This is the browser package's own release path. The server SDK, @doctronic-ai/sdk, releases from
+# release.yml on vX.Y.Z tags, with its own environment and trusted publisher. In a tag filter `*`
+# doesn't match `/`, so release.yml's `v*.*.*` never matches a browser/ tag, and this file's
+# `browser/v*.*.*` never matches a vX.Y.Z tag. test/release-workflows.test.ts checks both.
+#
+# Releases require:
+#
+# 1. The `npm-browser` environment's reviewer approval. The environment must require a reviewer and
+#    allow deployments only from `browser/v*` tags. GitHub creates a missing environment without
+#    protection, so the environment must exist before anyone pushes a `browser/v*` tag.
+# 2. A tag ruleset that limits who can create, move, or delete `browser/v*` tags.
+# 3. An npm trusted publisher for this workflow on @doctronic-ai/browser: GitHub Actions,
+#    `doctronic-ai` / `doctronic-sdk-typescript`, workflow `release-browser.yml`, environment
+#    `npm-browser`.
+#
+# npm adds a trusted publisher only to a package that already exists, so an npm org admin publishes
+# the first version by hand, as @doctronic-ai/sdk 0.1.0 was, so it has no provenance. Its
+# browser/vX.Y.Z tag and GitHub Release are added afterwards, and that tag's run of this workflow
+# is rejected or cancelled at the environment's approval, since npm refuses a version it already
+# has. The first version this workflow publishes is the next one.
+#
+# Create the trusted publisher (requirement 3) right before you push the tag: a new trusted
+# publisher expires unless it publishes within 2 days.
+#
+# A tag push runs this file as it is at the tagged commit, so anyone who can push a tag can run a
+# modified copy. The checks below catch mistakes, not attacks. The protection comes from the
+# requirements above: the environment's reviewer, the tag ruleset, and the trusted publisher bound
+# to this workflow and environment.
+#
+# npm authenticates through OIDC, so there's no npm token.
+
+name: Release browser package
+
+on:
+  push:
+    tags: ['browser/v*.*.*']
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish @doctronic-ai/browser to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-browser
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: release-browser
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # No dependency cache: a release installs only from the lockfile.
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check the tag matches package.json
+        run: |
+          version="$(node -p "require('./packages/browser/package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "browser/v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match packages/browser/package.json version $version. Tag browser/v$version instead."
+            exit 1
+          fi
+
+      # The same notes the github-release job publishes, checked before anything is published.
+      - name: Check the CHANGELOG has notes for the version
+        run: |
+          version="$(node -p "require('./packages/browser/package.json').version")"
+          node scripts/release-notes.mjs "$version" packages/browser/CHANGELOG.md > /dev/null
+
+      - name: Check the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points at a commit that isn't on main. Tag a commit from main."
+            exit 1
+          fi
+
+      - name: Check the package isn't private
+        run: |
+          if [ "$(node -p "require('./packages/browser/package.json').private === true")" = true ]; then
+            echo "::error::packages/browser/package.json has \"private\": true; remove it to publish."
+            exit 1
+          fi
+
+      # Node 22 bundles npm 10. Trusted publishing needs npm 11.5.1 or later.
+      - name: Install npm 11.21.0
+        run: npm install --global npm@11.21.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The root scripts cover the whole repository: lint and the root tests include the browser
+      # package, and the type check runs each workspace's too.
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Test the browser package
+        run: npm test --workspace packages/browser --if-present
+
+      - name: Build
+        run: npm run build --workspace packages/browser
+
+      # Fails on any file in the browser package's tarball outside its expected list, or any
+      # missing one.
+      - name: Check the tarball's file list
+        run: npm run check:package --workspace packages/browser
+
+      - name: Publish
+        run: |
+          version="$(node -p "require('./packages/browser/package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            npm publish --workspace packages/browser --access public --provenance --tag next
+          else
+            npm publish --workspace packages/browser --access public --provenance
+          fi
+
+  # Separate from the publish job so that job keeps only what publishing needs.
+  github-release:
+    name: Create the GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Write the release notes from the CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#browser/v}"
+          node scripts/release-notes.mjs "$version" packages/browser/CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          {
+            echo
+            echo "Published to npm as [\`@doctronic-ai/browser@$version\`](https://www.npmjs.com/package/@doctronic-ai/browser/v/$version)."
+          } >> "$RUNNER_TEMP/notes.md"
+
+      # Never marked Latest: the repository's Latest release stays the server SDK's.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#browser/v}"
+          prerelease=()
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --latest=false \
+            "${prerelease[@]}"
