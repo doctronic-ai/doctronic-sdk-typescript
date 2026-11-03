@@ -278,7 +278,7 @@ export class DoctronicBrowser {
         code: ErrorCode.noSession,
       });
     }
-    const chat = new Chat(this.#host(config), id, generation);
+    const chat = new Chat(this.#host(config, generation), id, generation);
     this.#chats.add(chat);
     return chat;
   }
@@ -291,28 +291,36 @@ export class DoctronicBrowser {
     this.#lifetime.abort();
   }
 
-  #host(config: DeploymentConfig): ChatHost {
+  #host(config: DeploymentConfig, generation: number): ChatHost {
+    // Every request a chat makes uses its own session's token, never one that replaced it.
+    const token = (): string => {
+      if (this.#generation !== generation) {
+        throw new DoctronicError("This chat's session has ended.", { code: ErrorCode.noSession });
+      }
+      return this.#token();
+    };
     return {
       config,
       generation: () => this.#generation,
       checkSession: () => this.hasSession,
-      openStream: (chatId, userInput, signal) => this.#openStream(chatId, userInput, signal),
+      openStream: (chatId, userInput, signal) =>
+        this.#openStream(chatId, userInput, token(), signal),
       getOfframp: async (chatId, kind) =>
         (await this.#request('GET /embed/chats/{chatId}/offramps/{kind}/', {
           pathParams: { chatId, kind },
-          token: this.#token(),
+          token: token(),
         })) as components['schemas']['OfframpLinkResponse'],
       rate: async (chatId, score) =>
         (await this.#request('POST /embed/chats/{chatId}/rating/', {
           pathParams: { chatId },
           body: { score },
-          token: this.#token(),
+          token: token(),
         })) as components['schemas']['RatingResponse'],
       rateMessage: async (chatId, message) =>
         (await this.#request('PATCH /embed/chats/{chatId}/rating/', {
           pathParams: { chatId },
           body: { message },
-          token: this.#token(),
+          token: token(),
         })) as components['schemas']['RatingResponse'],
       diagnostic: (code) => this.#diagnostic(code),
     };
@@ -360,11 +368,16 @@ export class DoctronicBrowser {
     }
   }
 
-  async #openStream(chatId: string, userInput: string, signal?: AbortSignal): Promise<OpenStream> {
+  async #openStream(
+    chatId: string,
+    userInput: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<OpenStream> {
     const call: Omit<Call, 'timeoutMs'> = {
       pathParams: { chatId },
       body: { userEvent: { type: 'user_message', userInput }, timezone: this.#timezone },
-      token: this.#token(),
+      token,
       signal,
     };
     const abort = linkAbort(this.#lifetime.signal, signal, this.#streamTimeoutMs);

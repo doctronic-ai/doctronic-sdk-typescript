@@ -10,6 +10,7 @@ import {
   harness,
   json,
   reply,
+  sessionBody,
   settle,
   sse,
 } from './helpers.js';
@@ -113,6 +114,43 @@ describe('turns', () => {
     await expect(chat.send('hi').next()).rejects.toMatchObject({ code: ErrorCode.chatEnded });
     expect(chat.state.ended).toEqual({ reason: 'session_ended', cause: 'expired' });
     expect(h.calls).not.toContain(STREAM);
+  });
+});
+
+describe('a replaced session', () => {
+  it('stops a turn still streaming when a new session replaces its own', async () => {
+    const { h, client, chat, streams } = await chatWith([
+      reply('m1', [{ type: 'conversation.end' }]),
+    ]);
+    const send = chat.send('hi');
+    const first = await send.next();
+    expect(first.value).toMatchObject({ type: 'message.start' });
+    h.routes['POST /embed/sessions/'] = () => json(sessionBody('tok_new'), 201);
+    await client.startSession({
+      intake: { age: 40, sex: 'female', state: 'AL' },
+      termsAccepted: true,
+    });
+    expect(await send.next()).toEqual({ done: true, value: undefined });
+    expect(streams[0]!.cancelled()).toBe(true);
+    expect(chat.state).toMatchObject({
+      streaming: false,
+      ended: { reason: 'session_ended', cause: 'replaced' },
+    });
+  });
+
+  it("refuses to rate a chat whose session was replaced, without sending the new session's token", async () => {
+    const { h, client, chat } = await chatWith([[frame({ type: 'conversation.end' })]], {
+      config: { ...CONFIG, offramps: [], rating: RATING },
+    });
+    await drain(chat.send('bye'));
+    h.routes['POST /embed/sessions/'] = () => json(sessionBody('tok_new'), 201);
+    await client.startSession({
+      intake: { age: 40, sex: 'female', state: 'AL' },
+      termsAccepted: true,
+    });
+    await expect(chat.rate(4)).rejects.toMatchObject({ code: ErrorCode.chatEnded });
+    await expect(chat.rateMessage('hi')).rejects.toMatchObject({ code: ErrorCode.chatEnded });
+    expect(h.calls.filter((call) => call.includes('/rating/'))).toEqual([]);
   });
 });
 

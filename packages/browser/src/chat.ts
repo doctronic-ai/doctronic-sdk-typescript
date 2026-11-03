@@ -191,6 +191,9 @@ export class Chat {
   readonly #ctaWidgets = new Set<string>();
   #assistantReplies = 0;
   #closed = false;
+  #active: OpenStream | null = null;
+  /** Set when the session ended under a streaming turn, which then stops quietly. */
+  #cancelled = false;
 
   /** @internal Created by `DoctronicBrowser.createChat()`. */
   constructor(host: ChatHost, id: string, generation: number) {
@@ -238,8 +241,11 @@ export class Chat {
       stream = await this.#host.openStream(this.id, userInput, signal);
       const turn = { accepted: false, refused: false, answered: false, errored: false };
       const open = new Set<string>();
+      this.#active = stream;
       for (;;) {
         const next = await stream.frames.next();
+        // The session ended mid-turn (not a safety end): the rest of the reply is dropped.
+        if (this.#cancelled) return;
         if (next.done) break;
         const event = this.#read(next.value, turn, open);
         if (event) yield event;
@@ -256,10 +262,12 @@ export class Chat {
         throw new StreamInterruptedError();
       }
     } catch (error) {
+      if (this.#cancelled) return;
       this.#failed(error);
       throw error;
     } finally {
-      if (stream && !done) {
+      this.#active = null;
+      if (stream && !done && !this.#cancelled) {
         if (this.state.ended?.reason === 'safety') void drain(stream);
         else await stream.cancel();
       }
@@ -274,15 +282,15 @@ export class Chat {
 
   /** Answers the deployment's rating question (`config.rating`). Submitting again changes it. */
   async rate(score: number): Promise<Rating> {
-    this.#refuseAfterSafetyEnd();
+    this.#assertCanRate();
     const rating = await this.#host.rate(this.id, score);
     if (!this.#closed) this.#update({ rating, ratingDue: false });
     return rating;
   }
 
   /** Adds the optional comment to a rated chat, or clears it with `null`. */
-  rateMessage(message: string | null): Promise<Rating> {
-    this.#refuseAfterSafetyEnd();
+  async rateMessage(message: string | null): Promise<Rating> {
+    this.#assertCanRate();
     return this.#host.rateMessage(this.id, message);
   }
 
@@ -292,6 +300,13 @@ export class Chat {
     this.#closed = true;
     for (const timer of this.#timers) clearTimeout(timer);
     this.#timers.clear();
+    // A turn still streaming when a new session replaces this one is dropped, so the old reply
+    // can't run on beside the new chat. One whose session merely expired runs to its end, as it
+    // does after a safety end.
+    if (this.#active && cause === 'replaced' && this.#state.ended?.reason !== 'safety') {
+      this.#cancelled = true;
+      void this.#active.cancel();
+    }
     this.#update({
       ended: this.#state.ended ?? { reason: 'session_ended', cause },
       // Answering needs the session.
@@ -299,9 +314,12 @@ export class Chat {
     });
   }
 
-  #refuseAfterSafetyEnd(): void {
+  #assertCanRate(): void {
     if (this.#state.ended?.reason === 'safety') {
       throw new ChatStateError('A guardian ended this chat.', { code: ErrorCode.chatEnded });
+    }
+    if (this.#stale()) {
+      throw new ChatStateError("This chat's session has ended.", { code: ErrorCode.chatEnded });
     }
   }
 
