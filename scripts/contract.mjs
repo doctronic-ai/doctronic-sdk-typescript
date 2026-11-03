@@ -96,14 +96,14 @@ function componentRefs(node, refs = new Set()) {
   return refs;
 }
 
-// Every component the paths, webhooks, and extensions reach, directly or through other
-// components.
-function reachableComponents(contract) {
+// Every component the paths, webhooks, and extensions reach, plus the `roots`, directly or
+// through other components.
+function reachableComponents(contract, roots = []) {
   const document = Object.fromEntries(
     Object.entries(contract).filter(([key]) => key !== 'components'),
   );
   const reached = new Set();
-  const pending = [...componentRefs(document)];
+  const pending = [...componentRefs(document), ...roots];
   while (pending.length) {
     const ref = pending.pop();
     if (reached.has(ref)) continue;
@@ -111,6 +111,13 @@ function reachableComponents(contract) {
     pending.push(...componentRefs(resolveRef(contract, { $ref: ref })));
   }
   return reached;
+}
+
+// The ref of every component the contract defines.
+function allComponents(contract) {
+  return Object.entries(contract.components ?? {}).flatMap(([type, entries]) =>
+    Object.keys(entries ?? {}).map((name) => `#/components/${type}/${name}`),
+  );
 }
 
 // Removes, in place, what only other credentials get from an operation the SDK keeps. Records
@@ -189,9 +196,11 @@ export function sdkContract(contract) {
     }
   }
 
-  // A component that nothing referenced before stays.
-  const reachable = reachableComponents(next);
-  for (const ref of reachableComponents(contract)) {
+  // A component that nothing referenced before stays, and so does every component it references.
+  const reachableBefore = reachableComponents(contract);
+  const unreferenced = allComponents(contract).filter((ref) => !reachableBefore.has(ref));
+  const reachable = reachableComponents(next, unreferenced);
+  for (const ref of reachableBefore) {
     if (reachable.has(ref)) continue;
     const [, , type, name] = ref.split('/');
     delete next.components[type][name];

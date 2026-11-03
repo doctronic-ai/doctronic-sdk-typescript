@@ -264,6 +264,18 @@ describe('a contract with the embed API', () => {
     expect((contract.components as Json).schemas.State).toBeDefined();
     expect(embed).toEqual(before);
   });
+
+  it('keeps what an unreferenced component references, even if only embed used it too', async () => {
+    const embed = withEmbed(pinned);
+    embed.components.schemas.Unreferenced = {
+      type: 'object',
+      properties: { session: { $ref: '#/components/schemas/EmbedSessionResponse' } },
+    };
+    const { contract, trimmed } = sdkContract(embed);
+    expect((contract.components as Json).schemas.EmbedSessionResponse).toBeDefined();
+    expect(trimmed.components).not.toContain('#/components/schemas/EmbedSessionResponse');
+    await expect(generateSchema(embed)).resolves.toContain('Unreferenced');
+  });
 });
 
 describe(`409 responses with ${RETRYABLE_CODES_EXTENSION}`, () => {
