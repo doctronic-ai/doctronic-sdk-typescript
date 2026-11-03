@@ -16,6 +16,7 @@ import {
   EVENT_SCHEMA_EXTENSION,
   loadContract,
   PINNED_CONTRACT,
+  resolveRef,
   RETRYABLE_CODES_EXTENSION,
   sdkContract,
   type Contract,
@@ -27,9 +28,12 @@ import { operations } from '../src/generated/operations.js';
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 let pinned: Contract;
+// The pinned contract without the embed API, whether or not the docs publish it yet.
+let base: Json;
 
 beforeAll(async () => {
   pinned = await loadContract(PINNED_CONTRACT);
+  base = withoutEmbed(pinned);
 });
 
 const copy = (contract: Contract): Json => structuredClone<Json>(contract);
@@ -44,6 +48,100 @@ const generateSchema = async (contract: Contract): Promise<string> =>
       silent: true,
     }),
   );
+
+// The embed API's own markers in the contract: its paths, its session token's scheme, the
+// responses and request fields only that token gets, and its sentences in the chat operations'
+// descriptions, word for word.
+const EMBED_PATH = '/embed/';
+const EMBED_SCHEME = 'EmbedSessionToken';
+const EMBED_RESPONSE = 'Sent for embed session tokens only.';
+const EMBED_FIELD = 'Embed sessions only:';
+const EMBED_PROSE: [string, string][] = [
+  [
+    ', or an embed\nsession token from `POST /embed/sessions/` alone (it carries its user, so no ' +
+      'user-id header).',
+    '.',
+  ],
+  [
+    ' Embed chats\n  only get Doctronic visit CTAs when their deployment offers Doctronic visits.',
+    '',
+  ],
+  [
+    '\nWhile the embed deployment is paused, embed requests answer `503 error.embed.paused`, and ' +
+      'an open\nembed stream ends with an `error` event whose `errorCode` is `error.embed.paused`.',
+    '',
+  ],
+];
+const SECURITY_FIELDS = ['security', 'x-doctronic-runtime-security'];
+
+const componentRefsIn = (node: unknown): Set<string> =>
+  new Set(
+    [...JSON.stringify(node).matchAll(/"\$ref":"(#\/components\/[^"]+)"/g)].map(
+      (match) => match[1] as string,
+    ),
+  );
+
+// The operation keys under the embed API's paths, in the order sdkContract reports them.
+const embedOperations = (contract: Contract): string[] =>
+  Object.entries(contract.paths as Json)
+    .filter(([path]) => path.startsWith(EMBED_PATH))
+    .flatMap(([path, item]) =>
+      ['get', 'put', 'post', 'patch', 'delete', 'head', 'options', 'trace']
+        .filter((method) => (item as Json)[method])
+        .map((method) => `${method.toUpperCase()} ${path}`),
+    );
+
+// Removes the embed API by those markers, without sdkContract, so the tests below compare the
+// generator's output with a contract that never had it. Components that only the embed API
+// referenced go too: those something referenced before and nothing references now.
+function withoutEmbed(contract: Contract): Json {
+  const next = copy(contract);
+  const referencedBefore = componentRefsIn(next);
+  for (const path of Object.keys(next.paths)) {
+    if (path.startsWith(EMBED_PATH)) delete next.paths[path];
+  }
+  delete next.components.securitySchemes[EMBED_SCHEME];
+  for (const item of Object.values(next.paths as Json)) {
+    for (const operation of Object.values(item as Json)) {
+      if (!operation || typeof operation !== 'object' || !('responses' in operation)) continue;
+      for (const field of SECURITY_FIELDS) {
+        if (!Array.isArray(operation[field])) continue;
+        operation[field] = operation[field].filter(
+          (requirement: Json) => !Object.hasOwn(requirement, EMBED_SCHEME),
+        );
+      }
+      for (const [status, response] of Object.entries(operation.responses as Json)) {
+        const { description } = (resolveRef(next, response) ?? {}) as { description?: string };
+        if (description?.endsWith(EMBED_RESPONSE)) {
+          delete operation.responses[status];
+        }
+      }
+      if (typeof operation.description === 'string') {
+        operation.description = EMBED_PROSE.reduce(
+          (text: string, [sentence, replacement]) => text.replaceAll(sentence, replacement),
+          operation.description,
+        );
+      }
+    }
+  }
+  for (const schema of Object.values(next.components.schemas as Json)) {
+    for (const [name, property] of Object.entries(((schema as Json).properties ?? {}) as Json)) {
+      const { description } = property as { description?: string };
+      if (description?.startsWith(EMBED_FIELD)) delete schema.properties[name];
+    }
+  }
+  for (;;) {
+    const referenced = componentRefsIn(next);
+    const unused = [...referencedBefore].filter(
+      (ref) => !referenced.has(ref) && resolveRef(next, { $ref: ref }) !== undefined,
+    );
+    if (unused.length === 0) return next;
+    for (const ref of unused) {
+      const [, , type, name] = ref.split('/') as [string, string, string, string];
+      delete next.components[type][name];
+    }
+  }
+}
 
 // Operations that don't take the organization's token, like the browser-only ones the contract
 // is adding: a session token of their own, no token at all, or an alternative to the org token.
@@ -80,17 +178,42 @@ describe('the pinned contract', () => {
     expect(generated).toEqual(operations);
   });
 
+  // The embed API may or may not be published; anything else skipped is a new operation the SDK
+  // would silently drop.
+  it('skips nothing but the embed API', () => {
+    expect(sdkContract(pinned).skipped).toEqual(embedOperations(pinned));
+  });
+
+  // Not its security scheme: no $ref reaches one, and openapi-typescript generates nothing from it.
+  it('leaves out exactly the embed API, but for its security scheme', () => {
+    const { securitySchemes } = pinned.components as Json;
+    expect(sdkContract(pinned).contract).toEqual({
+      ...base,
+      components: { ...base.components, securitySchemes },
+    });
+  });
+
+  it('generates the same code as without the embed API', async () => {
+    const { contract } = sdkContract(pinned);
+    expect(describe_(pinned)).toEqual(describe_(base));
+    expect(describeStreamEvents(contract)).toEqual(describeStreamEvents(base));
+    expect(describeWebhooks(contract)).toEqual(describeWebhooks(base));
+    expect(await generateSchema(pinned)).toBe(await generateSchema(base));
+  });
+});
+
+describe('the pinned contract without the embed API', () => {
   it('has nothing to leave out', () => {
-    const { contract, skipped, trimmed } = sdkContract(pinned);
+    const { contract, skipped, trimmed } = sdkContract(base);
     expect(skipped).toEqual([]);
     expect(Object.values(trimmed).flat()).toEqual([]);
-    expect(contract).toBe(pinned);
+    expect(contract).toBe(base);
   });
 });
 
 describe('operations without the organization token', () => {
   it('are skipped', () => {
-    const { contract, skipped } = sdkContract(withSessionOperations(pinned));
+    const { contract, skipped } = sdkContract(withSessionOperations(base));
     expect(skipped).toEqual([
       'DELETE /chats/',
       'HEAD /chats/',
@@ -105,9 +228,9 @@ describe('operations without the organization token', () => {
   });
 
   it('leave the output for the other operations unchanged', async () => {
-    const extended = withSessionOperations(pinned);
-    expect(describe_(extended)).toEqual(describe_(pinned));
-    expect(await generateSchema(extended)).toBe(await generateSchema(pinned));
+    const extended = withSessionOperations(base);
+    expect(describe_(extended)).toEqual(describe_(base));
+    expect(await generateSchema(extended)).toBe(await generateSchema(base));
   });
 
   it('fail the generator when the contract has no org token scheme', () => {
@@ -117,9 +240,9 @@ describe('operations without the organization token', () => {
   });
 });
 
-// The embed API as the unhidden contract describes it, added to the pinned one: browser-only
-// operations on their own session token, the components only they use, and what the chat
-// operations document for that token alone.
+// The embed API as the unhidden contract describes it, added to the pinned one without it:
+// browser-only operations on their own session token, the components only they use, and what the
+// chat operations document for that token alone.
 const EMBED_OPERATIONS = [
   'GET /embed/config/',
   'POST /embed/sessions/',
@@ -223,21 +346,21 @@ function withEmbed(contract: Contract): Json {
 
 describe('a contract with the embed API', () => {
   it('skips exactly the embed operations', () => {
-    expect(sdkContract(withEmbed(pinned)).skipped).toEqual(EMBED_OPERATIONS);
+    expect(sdkContract(withEmbed(base)).skipped).toEqual(EMBED_OPERATIONS);
   });
 
-  it('generates the same code as the pinned contract', async () => {
-    const embed = withEmbed(pinned);
-    expect(describe_(embed)).toEqual(describe_(pinned));
+  it('generates the same code as without it', async () => {
+    const embed = withEmbed(base);
+    expect(describe_(embed)).toEqual(describe_(base));
     const { contract } = sdkContract(embed);
-    expect(describeStreamEvents(contract)).toEqual(describeStreamEvents(pinned));
-    expect(describeWebhooks(contract)).toEqual(describeWebhooks(pinned));
-    expect(await generateSchema(embed)).toBe(await generateSchema(pinned));
+    expect(describeStreamEvents(contract)).toEqual(describeStreamEvents(base));
+    expect(describeWebhooks(contract)).toEqual(describeWebhooks(base));
+    expect(await generateSchema(embed)).toBe(await generateSchema(base));
   });
 
   it('leaves out what only the embed session token gets', () => {
     const keys = CHAT_OPERATIONS.map(([path, method]) => `${method.toUpperCase()} ${path}`);
-    const { contract, trimmed } = sdkContract(withEmbed(pinned));
+    const { contract, trimmed } = sdkContract(withEmbed(base));
     const { components, ...parts } = trimmed;
     expect(parts).toEqual({
       alternatives: keys,
@@ -256,7 +379,7 @@ describe('a contract with the embed API', () => {
   });
 
   it('keeps components that nothing referenced, and leaves its input alone', () => {
-    const embed = withEmbed(pinned);
+    const embed = withEmbed(base);
     embed.components.schemas.Unreferenced = { type: 'string' };
     const before = structuredClone(embed);
     const { contract } = sdkContract(embed);
@@ -266,7 +389,7 @@ describe('a contract with the embed API', () => {
   });
 
   it('keeps what an unreferenced component references, even if only embed used it too', async () => {
-    const embed = withEmbed(pinned);
+    const embed = withEmbed(base);
     embed.components.schemas.Unreferenced = {
       type: 'object',
       properties: { session: { $ref: '#/components/schemas/EmbedSessionResponse' } },
