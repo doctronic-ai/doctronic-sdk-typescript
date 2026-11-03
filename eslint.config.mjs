@@ -11,6 +11,8 @@ export default tseslint.config(
       'node_modules/',
       'src/generated/',
       'packages/browser/src/generated/',
+      'packages/browser/dist/',
+      'packages/browser/test/consumer/',
       'test/consumer/',
     ],
   },

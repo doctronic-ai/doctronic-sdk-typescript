@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // A browser app: the DOM's types, and none of Node's.
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true
+  }
+}
