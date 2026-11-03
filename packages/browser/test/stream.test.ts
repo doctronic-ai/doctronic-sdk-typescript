@@ -173,6 +173,43 @@ describe('sending a turn', () => {
     expect(count(h.calls, STREAM)).toBe(1);
   });
 
+  it('shows the fallback when the connection fails or drops, but not when the caller aborts', async () => {
+    const { h, chat } = await streamWith([]);
+    h.routes[STREAM] = () => Promise.reject(new TypeError('network'));
+    await expect(drain(chat.send('hi'))).rejects.toBeInstanceOf(APIConnectionError);
+    expect(chat.state.unavailable).toMatchObject({
+      reason: 'error',
+      code: 'error.client.connection',
+    });
+
+    h.routes[STREAM] = () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode(frame(events[0] as never)));
+          controller.error(new TypeError('dropped'));
+        },
+      });
+      return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    await expect(drain(chat.send('hi'))).rejects.toMatchObject({
+      message: 'The stream was interrupted.',
+    });
+    expect(chat.state.unavailable).toMatchObject({
+      reason: 'error',
+      code: 'error.client.connection',
+    });
+
+    h.routes[STREAM] = () => sse(events.map((event) => frame(event as never))).response;
+    await drain(chat.send('hi'));
+    expect(chat.state.unavailable).toBeNull();
+    const abort = new AbortController();
+    abort.abort();
+    await expect(drain(chat.send('hi', { signal: abort.signal }))).rejects.toMatchObject({
+      name: 'APIUserAbortError',
+    });
+    expect(chat.state.unavailable).toBeNull();
+  });
+
   it('reports a stream cut off mid-reply, without resending it', async () => {
     const { h, chat } = await streamWith([frame(events[0] as never), frame(events[1] as never)]);
     await expect(drain(chat.send('hi'))).rejects.toBeInstanceOf(StreamInterruptedError);

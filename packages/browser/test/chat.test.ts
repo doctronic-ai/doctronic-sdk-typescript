@@ -492,6 +492,28 @@ describe('safety', () => {
     });
   });
 
+  it('withdraws off-ramps already shown when a guardian ends the chat', async () => {
+    const { chat } = await chatWith([
+      reply('m1', [
+        { type: 'skill_code.cta', skillCode: '101', widget: 'cta_doctor_visit_widget' },
+      ]),
+      [
+        frame({
+          type: 'guardian',
+          guardianId: 'emergency_stroke',
+          message: '',
+          endsConversation: true,
+          category: 'emergency',
+        }),
+      ],
+    ]);
+    await drain(chat.send('hi'));
+    await settle();
+    expect(chat.state.offramps.map((o) => o.kind)).toEqual(['specialist']);
+    await drain(chat.send('my face is drooping'));
+    expect(chat.state.offramps).toEqual([]);
+  });
+
   it('shows no off-ramp link that arrives after a safety end', async () => {
     const { h, chat } = await chatWith([
       [

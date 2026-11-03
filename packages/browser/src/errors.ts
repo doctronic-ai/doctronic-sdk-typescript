@@ -24,6 +24,10 @@ export const ErrorCode = {
   /** The deployment's state rule is one this version doesn't know. */
   unsupportedIntake: 'error.client.unsupported_intake',
   streamInterrupted: 'error.client.stream_interrupted',
+  /** The request or stream timed out. */
+  timeout: 'error.client.timeout',
+  /** The connection failed or dropped. */
+  connection: 'error.client.connection',
   invalidResponse: 'error.client.invalid_response',
 } as const;
 

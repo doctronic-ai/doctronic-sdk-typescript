@@ -2,7 +2,15 @@
 // (the end of the conversation, safety notices, off-ramps, the rating question).
 
 import type { DeploymentConfig } from './config.js';
-import { APIError, DoctronicError, ErrorCode, RateLimitError, validRetryAfter } from './errors.js';
+import {
+  APIError,
+  APITimeoutError,
+  APIUserAbortError,
+  DoctronicError,
+  ErrorCode,
+  RateLimitError,
+  validRetryAfter,
+} from './errors.js';
 import type { components } from './generated/schema.js';
 import {
   isKnownChatStreamEvent,
@@ -95,7 +103,7 @@ export interface ChatState {
    * dismissable warning; the conversation continues. Cleared by `dismissNotice()`.
    */
   notice: GuardianCopy | null;
-  /** The off-ramps to show now, in the deployment's order. Only grows. */
+  /** The off-ramps to show now, in the deployment's order. Only grows, until a safety end clears it. */
   offramps: Offramp[];
   /** The chat ended normally, the deployment asks a rating question, and it isn't answered yet. */
   ratingDue: boolean;
@@ -227,17 +235,7 @@ export class Chat {
     let stream: OpenStream | null = null;
     let done = false;
     try {
-      try {
-        stream = await this.#host.openStream(this.id, userInput, signal);
-      } catch (error) {
-        if (error instanceof APIError && error.code) {
-          const wait = error instanceof RateLimitError ? error.retryAfter : null;
-          this.#update({ unavailable: unavailableFor(error.code, wait) });
-        } else if (error instanceof APIError) {
-          this.#update({ unavailable: unavailableFor(`http.${error.status}`, null) });
-        }
-        throw error;
-      }
+      stream = await this.#host.openStream(this.id, userInput, signal);
       const turn = { accepted: false, refused: false, answered: false, errored: false };
       const open = new Set<string>();
       for (;;) {
@@ -257,6 +255,9 @@ export class Chat {
         }
         throw new StreamInterruptedError();
       }
+    } catch (error) {
+      this.#failed(error);
+      throw error;
     } finally {
       if (stream && !done) {
         if (this.state.ended?.reason === 'safety') void drain(stream);
@@ -413,8 +414,27 @@ export class Chat {
   }
 
   #endForSafety(copy: GuardianCopy): void {
-    // A safety end wins over a plain one, whichever arrives first. No rating follows it.
-    this.#update({ ended: { reason: 'safety', ...copy }, ratingDue: false });
+    // A safety end wins over a plain one, whichever arrives first. No rating or next steps follow
+    // it, so links already shown are withdrawn too.
+    this.#update({ ended: { reason: 'safety', ...copy }, ratingDue: false, offramps: [] });
+  }
+
+  /** Records why a turn failed, so the UI can show the fallback. An abort is the caller's own doing. */
+  #failed(error: unknown): void {
+    if (error instanceof APIUserAbortError || error instanceof StreamInterruptedError) return;
+    if (this.state.ended?.reason === 'safety') return;
+    let unavailable: Unavailable;
+    if (error instanceof APIError) {
+      const wait = error instanceof RateLimitError ? error.retryAfter : null;
+      unavailable = unavailableFor(error.code ?? `http.${error.status}`, wait);
+    } else if (error instanceof APITimeoutError) {
+      unavailable = unavailableFor(ErrorCode.timeout, null);
+    } else if (error instanceof DoctronicError && error.code) {
+      unavailable = unavailableFor(error.code, null);
+    } else {
+      unavailable = unavailableFor(ErrorCode.connection, null);
+    }
+    this.#update({ unavailable });
   }
 
   #stale(): boolean {

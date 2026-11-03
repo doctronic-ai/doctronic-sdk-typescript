@@ -77,8 +77,7 @@ export function withConfigDefaults(config: Schemas['EmbedConfigResponse']): Depl
     intake: {
       ...intake,
       minAge: intake.minAge ?? DEFAULT_MIN_AGE,
-      // Kept as sent, unknown or not: stateStep() decides what to do with it.
-      state: intake.state ?? null,
+      state: stateRule(intake),
       roles: intake.roles ?? null,
       ineligibleMessage: intake.ineligibleMessage ?? DEFAULT_INELIGIBLE_MESSAGE,
     },
@@ -94,6 +93,22 @@ export function withConfigDefaults(config: Schemas['EmbedConfigResponse']): Depl
     rating: config.rating ?? null,
     hiddenArtifacts: config.hiddenArtifacts ?? [],
     paused: config.paused ?? false,
+  };
+}
+
+/**
+ * The state rule as sent, unknown or not: stateStep() decides what to do with it. A Partners API
+ * that predates `state` sends `allowedStates`, where a list means a selection.
+ */
+function stateRule(intake: Partial<Schemas['EmbedIntake']>): IntakeRules['state'] {
+  if (intake.state !== undefined) return intake.state;
+  const legacy: unknown = (intake as { allowedStates?: unknown }).allowedStates;
+  if (legacy == null) return null;
+  if (!isStateList(legacy)) return legacy as never; // stateStep() reads it as unsupported.
+  return {
+    mode: 'selection',
+    states: legacy,
+    ineligibleMessage: intake.ineligibleMessage ?? DEFAULT_INELIGIBLE_MESSAGE,
   };
 }
 

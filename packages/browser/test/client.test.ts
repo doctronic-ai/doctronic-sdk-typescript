@@ -144,6 +144,26 @@ describe('DoctronicBrowser', () => {
   });
 });
 
+describe('legacy intake', () => {
+  it("keeps an older API's allowedStates as a selection through the config defaults", async () => {
+    const h = harness();
+    h.routes[CONFIG_GET] = () =>
+      json({
+        ...CONFIG,
+        intake: { minAge: 18, allowedStates: ['AL', 'GA'], roles: null, ineligibleMessage: 'no' },
+      });
+    const config = await h.client().getConfig();
+    expect(stateStep(config.intake)).toEqual({ mode: 'selection', states: ['AL', 'GA'] });
+  });
+
+  it("still refuses an older API's allowedStates that isn't a list of states", async () => {
+    const h = harness();
+    h.routes[CONFIG_GET] = () => json({ ...CONFIG, intake: { allowedStates: 'AL' } });
+    const config = await h.client().getConfig();
+    expect(stateStep(config.intake)).toEqual({ mode: 'unsupported' });
+  });
+});
+
 describe('retries', () => {
   it('retries the config on transient failures, a bounded number of times', async () => {
     fakeClock();
