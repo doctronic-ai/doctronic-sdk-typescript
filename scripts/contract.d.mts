@@ -2,6 +2,9 @@
 
 export type Contract = Record<string, unknown>;
 
+/** `server` for the SDK in src/generated/, `browser` for packages/browser/src/generated/. */
+export type Profile = 'server' | 'browser';
+
 export interface OperationDescription {
   key: string;
   method: string;
@@ -14,6 +17,11 @@ export interface OperationDescription {
   retryableConflictCodes?: string[];
   dataRequired: boolean;
 }
+
+/** The browser profile's operations: `sessionToken` in place of `userScoped`. */
+export type BrowserOperationDescription = Omit<OperationDescription, 'userScoped'> & {
+  sessionToken: boolean;
+};
 
 export type JsonType = 'array' | 'boolean' | 'null' | 'number' | 'object' | 'string';
 
@@ -35,13 +43,15 @@ export interface WebhookDescription {
 export const PINNED_CONTRACT: string;
 export const PUBLISHED_CONTRACT_URL: string;
 export const ORG_TOKEN_SCHEME: string;
+export const EMBED_SESSION_SCHEME: string;
+export const PROFILE_NAMES: Profile[];
 export const RETRYABLE_CODES_EXTENSION: string;
 export const EVENT_SCHEMA_EXTENSION: string;
 export const WEBHOOK_ENVELOPE_FIELDS: string[];
 
 export function loadContract(source: string): Promise<Contract>;
 export function resolveRef(contract: Contract, value: unknown): unknown;
-/** What {@link sdkContract} left out of the operations it kept. */
+/** What {@link sdkContract} or {@link browserContract} left out of the operations it kept. */
 export interface TrimmedParts {
   /** Keys of the operations whose security alternatives without the org token were dropped. */
   alternatives: string[];
@@ -51,6 +61,8 @@ export interface TrimmedParts {
   fields: string[];
   /** Keys of the operations whose description lost embed-only prose. */
   descriptions: string[];
+  /** Event names of the webhooks left out. */
+  webhooks: string[];
   /** Refs of the components only the parts left out used. */
   components: string[];
 }
@@ -60,6 +72,18 @@ export function sdkContract(contract: Contract): {
   skipped: string[];
   trimmed: TrimmedParts;
 };
-export function describeOperations(contract: Contract): OperationDescription[];
-export function describeStreamEvents(contract: Contract): StreamEventsDescription;
+export function browserContract(contract: Contract): {
+  contract: Contract;
+  skipped: string[];
+  trimmed: TrimmedParts;
+};
+export function describeOperations(contract: Contract, profile?: 'server'): OperationDescription[];
+export function describeOperations(
+  contract: Contract,
+  profile: 'browser',
+): BrowserOperationDescription[];
+export function describeStreamEvents(
+  contract: Contract,
+  profile?: Profile,
+): StreamEventsDescription;
 export function describeWebhooks(contract: Contract): WebhookDescription[];
