@@ -94,7 +94,12 @@ describe('shouldRetry', () => {
     const MISMATCH = 'error.idempotency.payload_mismatch';
     const CONCURRENT = 'error.idempotency.concurrent_request';
     const SLOT = 'error.appointments.slot_unavailable';
-    const documented = { ...scheduled, conflictCodes: [SLOT, MISMATCH, CONCURRENT] };
+    // The pinned contract lists retryable codes for this operation. Leave them out here.
+    const documented: OperationSpec = {
+      ...scheduled,
+      conflictCodes: [SLOT, MISMATCH, CONCURRENT],
+      retryableConflictCodes: undefined,
+    };
     const listed: OperationSpec = { ...documented, retryableConflictCodes: [CONCURRENT] };
 
     it('retries a documented code only when the contract lists it', () => {

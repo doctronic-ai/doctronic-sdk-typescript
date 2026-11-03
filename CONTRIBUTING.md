@@ -41,6 +41,11 @@ the contract or the generator instead. CI regenerates it and fails on any differ
 - `src/generated/operations.ts` has the runtime facts the client needs about each operation:
   idempotency, user scope, streaming, documented statuses, and `409` codes, including the ones the
   contract marks retryable in `x-doctronic-retryable-codes`.
+- `src/generated/events.ts` maps each stream event `type` and each webhook event name to its
+  schema type, and lists the fields each stream event always carries, which the stream parser
+  checks. The stream events come from the union that `x-doctronic-event-schema` names on the
+  stream's `text/event-stream` response, and the webhooks from the contract's `webhooks`. A
+  contract without either fails `npm run generate`, which then writes nothing.
 
 `npm run generate` reads `openapi/doctronic-v1.json`, a pinned copy of the contract the docs
 publish at https://docs.doctronic.ai/openapi/doctronic-v1.json. It generates only operations that

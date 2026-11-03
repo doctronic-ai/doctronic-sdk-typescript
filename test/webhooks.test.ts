@@ -2,7 +2,13 @@ import { createHmac } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { WebhookVerificationError, isKnownWebhookEvent, verifyWebhook } from '../src/index.js';
+import { webhookEvents } from '../src/generated/events.js';
+import {
+  WebhookVerificationError,
+  isKnownWebhookEvent,
+  verifyWebhook,
+  type KnownWebhookEvent,
+} from '../src/index.js';
 
 const SECRET = 'whsec_test_not_a_real_secret';
 
@@ -89,6 +95,75 @@ describe('verifyWebhook', () => {
         break;
       default:
         throw new Error(`unexpected ${event.event}`);
+    }
+  });
+
+  it('types every event the contract documents', () => {
+    const appointment = {
+      appointmentId: 'dc_01K1EXAMPLE00000000000000',
+      userId: 'mem_01K6JGGM2G2DB4Y9KB9H9MJJ6Q',
+    };
+    const deliveries: KnownWebhookEvent[] = [
+      {
+        eventId: 'e1',
+        event: 'appointment.waiting_room_ready',
+        occurredAt: '2026-08-25T18:30:00Z',
+        data: { ...appointment, waitingRoomUrl: 'https://dctd.co/r/example/' },
+      },
+      {
+        eventId: 'e2',
+        event: 'appointment.practitioner_joined',
+        occurredAt: '2026-08-25T18:31:00Z',
+        data: appointment,
+      },
+      {
+        eventId: 'e3',
+        event: 'appointment.call_ended',
+        occurredAt: '2026-08-25T19:05:00Z',
+        data: appointment,
+      },
+      {
+        eventId: 'e4',
+        event: 'artifact.ready',
+        occurredAt: '2026-08-25T19:06:00Z',
+        data: {
+          artifactId: 'art_1',
+          artifactType: 'long_summary',
+          chatId: 'chat_1',
+          userId: 'mem_1',
+        },
+      },
+    ];
+    expect(deliveries.map((delivery) => delivery.event).sort()).toEqual([...webhookEvents].sort());
+    for (const delivery of deliveries) {
+      const body = JSON.stringify(delivery);
+      const event = verifyWebhook(body, sign(body), SECRET);
+      expect(event).toEqual(delivery);
+      if (!isKnownWebhookEvent(event)) throw new Error(`expected ${delivery.event} to be known`);
+      switch (event.event) {
+        case 'appointment.waiting_room_ready':
+          expect(event.data.waitingRoomUrl).toBe('https://dctd.co/r/example/');
+          break;
+        case 'appointment.practitioner_joined':
+        case 'appointment.call_ended':
+          expect(event.data.appointmentId).toBe(appointment.appointmentId);
+          break;
+        case 'artifact.ready':
+          expect(event.data.artifactType).toBe('long_summary');
+          break;
+      }
+    }
+  });
+
+  it('requires occurredAt', () => {
+    for (const body of [
+      '{"eventId":"e1","event":"artifact.ready","data":{}}',
+      '{"eventId":"e1","event":"artifact.ready","createdAt":"2026-08-25T19:05:00Z","data":{}}',
+      '{"eventId":"e1","event":"artifact.ready","occurredAt":null,"data":{}}',
+    ]) {
+      expect(() => verifyWebhook(body, sign(body), SECRET)).toThrow(
+        /not a Doctronic event envelope/,
+      );
     }
   });
 

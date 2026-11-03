@@ -6,13 +6,29 @@ import {
   Doctronic,
   isKnownChatStreamEvent,
   isKnownWebhookEvent,
+  type AppointmentCallEndedData,
+  type AppointmentCallEndedEvent,
+  type AppointmentPractitionerJoinedData,
+  type AppointmentPractitionerJoinedEvent,
+  type AppointmentWaitingRoomReadyData,
+  type AppointmentWaitingRoomReadyEvent,
   type Appointment,
   type Artifact,
+  type ArtifactReadyData,
+  type ArtifactReadyEvent,
+  type ArtifactType,
   type Chat,
   type ChatStream,
   type ChatStreamEvent,
+  type ConsultationArtifacts,
+  type GuardianCategory,
+  type GuardianEvent,
+  type GuardianId,
+  type KnownChatStreamEvent,
+  type KnownWebhookEvent,
   type UnknownChatStreamEvent,
   type User,
+  type WebhookEnvelope,
   type WebhookEvent,
 } from '../src/index.js';
 import type { components } from '../src/generated/schema.js';
@@ -72,14 +88,78 @@ describe('types', () => {
           expectTypeOf(event.role).toBeString();
           break;
         case 'ai_consultation.complete':
-          expectTypeOf(event.artifacts.soapNote).toEqualTypeOf<string | null | undefined>();
+          expectTypeOf(event.artifacts.soapNote).toEqualTypeOf<string | null>();
           break;
         case 'error':
-          expectTypeOf(event.retryAfterSeconds).toEqualTypeOf<number | undefined>();
+          expectTypeOf(event.retryAfterSeconds).toEqualTypeOf<number | null | undefined>();
           break;
       }
     };
     void handle;
+  });
+
+  it('take stream event types from the contract', () => {
+    expectTypeOf<KnownChatStreamEvent['type']>().toEqualTypeOf<
+      | 'message.start'
+      | 'message.content'
+      | 'message.stop'
+      | 'guardian'
+      | 'conversation.offtopic'
+      | 'conversation.end'
+      | 'skill_code.cta'
+      | 'ai_consultation.complete'
+      | 'error'
+    >();
+    expectTypeOf<KnownChatStreamEvent>().toEqualTypeOf<components['schemas']['StreamChatEvent']>();
+    expectTypeOf<ConsultationArtifacts>().toEqualTypeOf<{
+      longSummary: string | null;
+      shortSummary: string | null;
+      soapNote: string | null;
+    }>();
+  });
+
+  it('keep guardian IDs and categories open', () => {
+    expectTypeOf<GuardianEvent['guardianId']>().toEqualTypeOf<string>();
+    expectTypeOf<GuardianEvent['category']>().toEqualTypeOf<string>();
+    expectTypeOf<'emergency_breathing'>().toExtend<GuardianId>();
+    expectTypeOf<'emergency'>().toExtend<GuardianCategory>();
+    expectTypeOf<GuardianEvent['endsConversation']>().toEqualTypeOf<boolean>();
+  });
+
+  it('take webhook payload types from the contract, in the documented envelope', () => {
+    expectTypeOf<AppointmentWaitingRoomReadyEvent>().toEqualTypeOf<
+      WebhookEnvelope<'appointment.waiting_room_ready', AppointmentWaitingRoomReadyData>
+    >();
+    expectTypeOf<AppointmentPractitionerJoinedEvent>().toEqualTypeOf<
+      WebhookEnvelope<'appointment.practitioner_joined', AppointmentPractitionerJoinedData>
+    >();
+    expectTypeOf<AppointmentCallEndedEvent>().toEqualTypeOf<
+      WebhookEnvelope<'appointment.call_ended', AppointmentCallEndedData>
+    >();
+    expectTypeOf<ArtifactReadyEvent>().toEqualTypeOf<
+      WebhookEnvelope<'artifact.ready', ArtifactReadyData>
+    >();
+    expectTypeOf<AppointmentWaitingRoomReadyData>().toEqualTypeOf<{
+      appointmentId: string;
+      userId: string;
+      waitingRoomUrl: string;
+    }>();
+    expectTypeOf<AppointmentCallEndedData>().toEqualTypeOf<{
+      appointmentId: string;
+      userId: string;
+    }>();
+    expectTypeOf<ArtifactReadyData>().toEqualTypeOf<{
+      artifactId: string;
+      artifactType: ArtifactType;
+      chatId: string;
+      userId: string | null;
+    }>();
+    expectTypeOf<KnownWebhookEvent['event']>().toEqualTypeOf<
+      | 'appointment.waiting_room_ready'
+      | 'appointment.practitioner_joined'
+      | 'appointment.call_ended'
+      | 'artifact.ready'
+    >();
   });
 
   it('narrow webhook events after isKnownWebhookEvent()', () => {

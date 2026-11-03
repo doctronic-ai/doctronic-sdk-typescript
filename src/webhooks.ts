@@ -1,10 +1,12 @@
 // Webhook signature verification, following the scheme in the docs' Webhooks page
-// (webhooks.mdx). The contract doesn't describe webhooks, so the event types follow the docs.
+// (webhooks.mdx). The payload types are generated from the contract's `webhooks`
+// (src/generated/events.ts).
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-import type { ArtifactType } from './artifacts.js';
 import { WebhookVerificationError, isRecord } from './errors.js';
+import { webhookEvents, type WebhookPayloads } from './generated/events.js';
+import type { components } from './generated/schema.js';
 
 /** The header that carries the signature. */
 export const WEBHOOK_SIGNATURE_HEADER = 'X-Doctronic-Signature';
@@ -21,46 +23,32 @@ export interface WebhookEnvelope<E extends string, D> {
 }
 
 /** A join URL is ready. Replace any URL you stored earlier. */
-export type AppointmentWaitingRoomReadyEvent = WebhookEnvelope<
-  'appointment.waiting_room_ready',
-  { appointmentId: string; userId: string; waitingRoomUrl: string }
->;
+export type AppointmentWaitingRoomReadyEvent = WebhookPayloads['appointment.waiting_room_ready'];
+export type AppointmentWaitingRoomReadyData =
+  components['schemas']['AppointmentWaitingRoomReadyData'];
 
 /** A practitioner joined the appointment. */
-export type AppointmentPractitionerJoinedEvent = WebhookEnvelope<
-  'appointment.practitioner_joined',
-  { appointmentId: string; userId: string }
->;
+export type AppointmentPractitionerJoinedEvent = WebhookPayloads['appointment.practitioner_joined'];
+export type AppointmentPractitionerJoinedData =
+  components['schemas']['AppointmentPractitionerJoinedData'];
 
 /** The appointment call ended. */
-export type AppointmentCallEndedEvent = WebhookEnvelope<
-  'appointment.call_ended',
-  { appointmentId: string; userId: string }
->;
+export type AppointmentCallEndedEvent = WebhookPayloads['appointment.call_ended'];
+export type AppointmentCallEndedData = components['schemas']['AppointmentCallEndedData'];
 
 /** A consultation document is ready to retrieve. */
-export type ArtifactReadyEvent = WebhookEnvelope<
-  'artifact.ready',
-  { artifactId: string; artifactType: ArtifactType; chatId: string; userId: string | null }
->;
+export type ArtifactReadyEvent = WebhookPayloads['artifact.ready'];
+export type ArtifactReadyData = components['schemas']['ArtifactReadyData'];
 
 /** An event this SDK doesn't know yet. Acknowledge it with `2xx`. */
 export type UnknownWebhookEvent = WebhookEnvelope<string, unknown>;
 
-export type KnownWebhookEvent =
-  | AppointmentWaitingRoomReadyEvent
-  | AppointmentPractitionerJoinedEvent
-  | AppointmentCallEndedEvent
-  | ArtifactReadyEvent;
+/** Every event the contract documents, as a union on `event`. */
+export type KnownWebhookEvent = WebhookPayloads[keyof WebhookPayloads];
 
 export type WebhookEvent = KnownWebhookEvent | UnknownWebhookEvent;
 
-const KNOWN_WEBHOOK_EVENTS: ReadonlySet<string> = new Set<KnownWebhookEvent['event']>([
-  'appointment.waiting_room_ready',
-  'appointment.practitioner_joined',
-  'appointment.call_ended',
-  'artifact.ready',
-]);
+const KNOWN_WEBHOOK_EVENTS: ReadonlySet<string> = new Set(webhookEvents);
 
 /** Narrows a delivery to the documented events, so a switch on `event.event` narrows `data`. */
 export function isKnownWebhookEvent(event: WebhookEvent): event is KnownWebhookEvent {
