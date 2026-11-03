@@ -1,0 +1,22 @@
+{
+  "name": "@doctronic-ai/browser",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser client for the Doctronic embed API, for partners using a publishable key",
+  "author": "Doctronic",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/doctronic-ai/doctronic-sdk-typescript.git",
+    "directory": "packages/browser"
+  },
+  "bugs": {
+    "url": "https://github.com/doctronic-ai/doctronic-sdk-typescript/issues"
+  },
+  "homepage": "https://docs.doctronic.ai",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
