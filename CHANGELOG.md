@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-03)
 
 A minor release. The stream event and webhook payload types are generated from the contract, and
 the stream event types change where the contract differs from the handwritten ones. The pinned
