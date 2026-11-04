@@ -138,6 +138,27 @@ describe('a replaced session', () => {
     });
   });
 
+  it('closes a turn that was still opening when a new session replaced its own', async () => {
+    const { h, client, chat, streams } = await chatWith([reply('m1')]);
+    let respond!: () => void;
+    const stream = h.routes['POST /chats/chat_1/stream/']!;
+    h.routes['POST /chats/chat_1/stream/'] = (url, init) =>
+      new Promise((resolve) => {
+        respond = () => resolve(stream(url, init));
+      });
+    const send = drain(chat.send('hi'));
+    await settle();
+    h.routes['POST /embed/sessions/'] = () => json(sessionBody('tok_new'), 201);
+    await client.startSession({
+      intake: { age: 40, sex: 'female', state: 'AL' },
+      termsAccepted: true,
+    });
+    respond();
+    expect(await send).toEqual([]);
+    expect(streams[0]!.cancelled()).toBe(true);
+    expect(chat.state.streaming).toBe(false);
+  });
+
   it("refuses to rate a chat whose session was replaced, without sending the new session's token", async () => {
     const { h, client, chat } = await chatWith([[frame({ type: 'conversation.end' })]], {
       config: { ...CONFIG, offramps: [], rating: RATING },

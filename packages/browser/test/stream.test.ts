@@ -258,6 +258,18 @@ describe('sending a turn', () => {
     expect(chat.state.streaming).toBe(false);
   });
 
+  it('keeps a timeout a timeout when frames are still buffered', async () => {
+    const h = harness();
+    h.routes[STREAM] = () => sse([wire]).response;
+    const client = await h.started({ streamTimeoutMs: 30 });
+    const chat = await client.createChat();
+    const send = chat.send('hi');
+    await send.next();
+    await new Promise((resolve) => setTimeout(resolve, 60)); // The deadline passes mid-turn.
+    await expect(drain(send)).rejects.toBeInstanceOf(APITimeoutError);
+    expect(chat.state.unavailable).toMatchObject({ reason: 'error', code: 'error.client.timeout' });
+  });
+
   it("refuses a response that isn't an event stream", async () => {
     const { h, chat } = await streamWith([]);
     h.routes[STREAM] = () =>

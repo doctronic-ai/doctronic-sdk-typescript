@@ -241,6 +241,10 @@ export class Chat {
       stream = await this.#host.openStream(this.id, userInput, signal);
       const turn = { accepted: false, refused: false, answered: false, errored: false };
       const open = new Set<string>();
+      if (this.#cancelled) {
+        await stream.cancel();
+        return;
+      }
       this.#active = stream;
       for (;;) {
         const next = await stream.frames.next();
@@ -303,9 +307,10 @@ export class Chat {
     // A turn still streaming when a new session replaces this one is dropped, so the old reply
     // can't run on beside the new chat. One whose session merely expired runs to its end, as it
     // does after a safety end.
-    if (this.#active && cause === 'replaced' && this.#state.ended?.reason !== 'safety') {
+    if (this.#state.streaming && cause === 'replaced' && this.#state.ended?.reason !== 'safety') {
       this.#cancelled = true;
-      void this.#active.cancel();
+      // A turn still opening is closed as soon as its stream arrives.
+      if (this.#active) void this.#active.cancel();
     }
     this.#update({
       ended: this.#state.ended ?? { reason: 'session_ended', cause },

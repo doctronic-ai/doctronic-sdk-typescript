@@ -397,12 +397,15 @@ export class DoctronicBrowser {
       abort.dispose();
       throw invalidResponse();
     }
-    const frames = readFrames(response.body, abort);
+    const body = response.body;
+    const frames = readFrames(body, abort);
     return {
       frames,
       cancel: async () => {
         abort.controller.abort();
         await frames.return(undefined).catch(() => undefined);
+        // A turn closed before its first read still holds the body open.
+        if (!body.locked) await body.cancel().catch(() => undefined);
       },
     };
   }
@@ -571,7 +574,8 @@ async function* readFrames(
   try {
     for await (const frame of parseSse(body)) {
       // One network chunk can hold several frames: deliver none of them after an abort.
-      if (abort.signal.aborted) throw new APIUserAbortError();
+      // A timeout stays a timeout; only the caller's abort or dispose() is an abort.
+      if (abort.signal.aborted) throw abort.translate(new DOMException('Aborted', 'AbortError'));
       yield frame;
     }
   } catch (error) {
