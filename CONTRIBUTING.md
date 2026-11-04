@@ -109,7 +109,9 @@ on every run.
   `ci:`, and so on. Pull requests are squash-merged, so the title becomes the commit on `main`.
 - `main` requires an approving review, passing checks, resolved conversations, a branch that's up
   to date, and signed commits.
-- Add a line under the next version in [CHANGELOG.md](CHANGELOG.md) for any change users can see.
+- Add a line under `## Unreleased` in the changed package's CHANGELOG for any change users can
+  see: [CHANGELOG.md](CHANGELOG.md) for the server SDK,
+  [packages/browser/CHANGELOG.md](packages/browser/CHANGELOG.md) for the browser package.
 
 ## Releases
 
@@ -123,3 +125,8 @@ Each package releases on its own, from its own tags on `main`:
 Each workflow checks the version against its package's `package.json` and the entry in its
 CHANGELOG, publishes to npm through trusted publishing, and creates the GitHub Release. Each one's
 header lists what a release needs.
+
+A release starts with a `chore: release` pull request that sets the package's version (its
+`package.json` and `package-lock.json`, and the server SDK's `VERSION` in `src/client.ts`) and
+turns its CHANGELOG's `## Unreleased` heading into `## X.Y.Z (YYYY-MM-DD)`. Tag the merged commit
+afterwards; the workflow reads that heading for the release notes.
