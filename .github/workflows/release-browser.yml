@@ -124,8 +124,9 @@ jobs:
         run: npm run build --workspace packages/browser
 
       # Fails on any file in the browser package's tarball outside its expected list, or any
-      # missing one.
-      - name: Check the tarball's file list
+      # missing one, and on a tarball that doesn't install, type-check and import as a consumer
+      # would.
+      - name: Check the tarball
         run: npm run check:package --workspace packages/browser
 
       - name: Publish
