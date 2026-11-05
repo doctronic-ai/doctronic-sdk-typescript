@@ -159,6 +159,28 @@ describe('a replaced session', () => {
     expect(chat.state.streaming).toBe(false);
   });
 
+  it("lets go of the caller's signal when a turn still opening is closed", async () => {
+    const { h, client, chat } = await chatWith([reply('m1')]);
+    let respond!: () => void;
+    const stream = h.routes['POST /chats/chat_1/stream/']!;
+    h.routes['POST /chats/chat_1/stream/'] = (url, init) =>
+      new Promise((resolve) => {
+        respond = () => resolve(stream(url, init));
+      });
+    const caller = new AbortController();
+    const removed = vi.spyOn(caller.signal, 'removeEventListener');
+    const send = drain(chat.send('hi', { signal: caller.signal }));
+    await settle();
+    h.routes['POST /embed/sessions/'] = () => json(sessionBody('tok_new'), 201);
+    await client.startSession({
+      intake: { age: 40, sex: 'female', state: 'AL' },
+      termsAccepted: true,
+    });
+    respond();
+    await send;
+    expect(removed).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
   it("refuses to rate a chat whose session was replaced, without sending the new session's token", async () => {
     const { h, client, chat } = await chatWith([[frame({ type: 'conversation.end' })]], {
       config: { ...CONFIG, offramps: [], rating: RATING },
@@ -348,6 +370,25 @@ describe('safety', () => {
     await settle();
     expect(streams[0]!.cancelled()).toBe(false);
     expect(chat.state.streaming).toBe(false);
+  });
+
+  it('applies a later guardian read in the background after the consumer stopped', async () => {
+    const guardian = {
+      type: 'guardian',
+      guardianId: 'emergency_stroke',
+      message: '',
+      endsConversation: true,
+      category: 'emergency',
+    };
+    const { chat } = await chatWith([
+      [frame(guardian), ...reply('m1'), frame({ ...guardian, text: 'Call 911 now' })],
+    ]);
+    for await (const event of chat.send('my face is drooping')) {
+      expect(event.type).toBe('guardian');
+      break;
+    }
+    await settle();
+    expect(chat.state.ended).toMatchObject({ reason: 'safety', text: 'Call 911 now' });
   });
 
   it('locks the chat for any category when the guardian ends it, feedback included', async () => {

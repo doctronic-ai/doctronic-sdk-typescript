@@ -272,7 +272,7 @@ export class Chat {
     } finally {
       this.#active = null;
       if (stream && !done && !this.#cancelled) {
-        if (this.state.ended?.reason === 'safety') void drain(stream);
+        if (this.state.ended?.reason === 'safety') void this.#drain(stream);
         else await stream.cancel();
       }
       this.#update({ streaming: false });
@@ -514,17 +514,28 @@ export class Chat {
     );
   }
 
+  /**
+   * Reads the rest of a turn after a safety end, once the caller stopped listening. Nothing is
+   * yielded, but a later guardian still updates the safety copy shown.
+   */
+  async #drain(stream: OpenStream): Promise<void> {
+    try {
+      for (;;) {
+        const next = await stream.frames.next();
+        if (next.done) return;
+        const parsed = toChatStreamEvent(next.value);
+        if (parsed.kind !== 'event' || !isKnownChatStreamEvent(parsed.event)) continue;
+        // Only a guardian can still change what's shown: the chat has ended for safety.
+        if (parsed.event.type !== 'guardian') continue;
+        this.#observe(parsed.event, { answered: true, errored: false }, new Set());
+      }
+    } catch {
+      // The connection dropped or the client was disposed: there's nothing left to read.
+    }
+  }
+
   #update(patch: Partial<ChatState>): void {
     this.#state = { ...this.#state, ...patch };
     for (const listener of this.#listeners) listener(this.#state);
-  }
-}
-
-/** Reads a stream to its end, discarding the events. */
-async function drain(stream: OpenStream): Promise<void> {
-  try {
-    while (!(await stream.frames.next()).done);
-  } catch {
-    // The connection dropped or the client was disposed: there's nothing left to read.
   }
 }

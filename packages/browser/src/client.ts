@@ -403,6 +403,8 @@ export class DoctronicBrowser {
       frames,
       cancel: async () => {
         abort.controller.abort();
+        // `return()` on a generator never read skips its `finally`, so its timer is freed here.
+        abort.dispose();
         await frames.return(undefined).catch(() => undefined);
         // A turn closed before its first read still holds the body open.
         if (!body.locked) await body.cancel().catch(() => undefined);
