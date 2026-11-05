@@ -41,13 +41,18 @@ export async function loadContract(source) {
   return contract;
 }
 
+// The node a local `$ref` points to, without following it any further.
+function lookupRef(contract, ref) {
+  const pointer = ref.replace(/^#\//, '').split('/');
+  return pointer.reduce(
+    (node, key) => node?.[key.replace(/~1/g, '/').replace(/~0/g, '~')],
+    contract,
+  );
+}
+
 export function resolveRef(contract, value) {
   if (!value || typeof value.$ref !== 'string') return value;
-  const pointer = value.$ref.replace(/^#\//, '').split('/');
-  return resolveRef(
-    contract,
-    pointer.reduce((node, key) => node?.[key.replace(/~1/g, '/').replace(/~0/g, '~')], contract),
-  );
+  return resolveRef(contract, lookupRef(contract, value.$ref));
 }
 
 // The operation's security requirements that include the organization's token.
@@ -108,7 +113,8 @@ function reachableComponents(contract, roots = []) {
     const ref = pending.pop();
     if (reached.has(ref)) continue;
     reached.add(ref);
-    pending.push(...componentRefs(resolveRef(contract, { $ref: ref })));
+    // One hop at a time, so a component that is only a `$ref` to another still reaches it.
+    pending.push(...componentRefs(lookupRef(contract, ref)));
   }
   return reached;
 }

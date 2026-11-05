@@ -399,6 +399,24 @@ describe('a contract with the embed API', () => {
     expect(trimmed.components).not.toContain('#/components/schemas/EmbedSessionResponse');
     await expect(generateSchema(embed)).resolves.toContain('Unreferenced');
   });
+
+  it('keeps the target of an alias a kept operation uses, even if embed used the target too', () => {
+    const embed = withEmbed(base);
+    const responses = embed.components.responses as Json;
+    responses.Alias = { $ref: '#/components/responses/Target' };
+    responses.Target = { description: 'Shared.' };
+    (embed.paths['/chats/{chatId}/'].get as Json).responses['418'] = {
+      $ref: '#/components/responses/Alias',
+    };
+    (embed.paths['/embed/config/'].get as Json).responses['418'] = {
+      $ref: '#/components/responses/Target',
+    };
+    const { contract, trimmed } = sdkContract(embed);
+    const kept = (contract.components as Json).responses as Json;
+    expect(kept.Alias).toBeDefined();
+    expect(kept.Target).toBeDefined();
+    expect(trimmed.components).not.toContain('#/components/responses/Target');
+  });
 });
 
 describe(`409 responses with ${RETRYABLE_CODES_EXTENSION}`, () => {
