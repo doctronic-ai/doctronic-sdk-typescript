@@ -111,7 +111,9 @@ on every run.
   to date, and signed commits.
 - Add a line under `## Unreleased` in the changed package's CHANGELOG for any change users can
   see: [CHANGELOG.md](CHANGELOG.md) for the server SDK,
-  [packages/browser/CHANGELOG.md](packages/browser/CHANGELOG.md) for the browser package.
+  [packages/browser/CHANGELOG.md](packages/browser/CHANGELOG.md) for the browser package. If the
+  CHANGELOG has no `## Unreleased` heading yet (right after a release), add one above the latest
+  version.
 
 ## Releases
 
