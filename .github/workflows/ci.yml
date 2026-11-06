@@ -50,6 +50,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Build the browser package
+        run: npm run build --workspace packages/browser
+
   # Installs the packed tarball into test/consumer/, type-checks it under each module resolution,
   # and compares the declared value exports with the runtime ones.
   package:
@@ -76,6 +79,14 @@ jobs:
 
       - name: Check the package
         run: npm run check:package
+
+      # The browser package's tarball: installed outside the workspace, type-checked without
+      # Node's types, and checked for private references, Node built-ins and React.
+      - name: Build the browser package
+        run: npm run build --workspace packages/browser
+
+      - name: Check the browser package
+        run: npm run check:package --workspace packages/browser
 
   # Deterministic: compares with the committed copy of the contract, never the network.
   # contract-drift.yml compares that copy with the published contract on a schedule, and
