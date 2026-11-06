@@ -41,7 +41,25 @@ export const WEBHOOK_ENVELOPE_FIELDS: string[];
 
 export function loadContract(source: string): Promise<Contract>;
 export function resolveRef(contract: Contract, value: unknown): unknown;
-export function sdkContract(contract: Contract): { contract: Contract; skipped: string[] };
+/** What {@link sdkContract} left out of the operations it kept. */
+export interface TrimmedParts {
+  /** Keys of the operations whose security alternatives without the org token were dropped. */
+  alternatives: string[];
+  /** `STATUS METHOD /path` of each embed-only response. */
+  responses: string[];
+  /** `Component.field` of each embed-only request field. */
+  fields: string[];
+  /** Keys of the operations whose description lost embed-only prose. */
+  descriptions: string[];
+  /** Refs of the components only the parts left out used. */
+  components: string[];
+}
+
+export function sdkContract(contract: Contract): {
+  contract: Contract;
+  skipped: string[];
+  trimmed: TrimmedParts;
+};
 export function describeOperations(contract: Contract): OperationDescription[];
 export function describeStreamEvents(contract: Contract): StreamEventsDescription;
 export function describeWebhooks(contract: Contract): WebhookDescription[];

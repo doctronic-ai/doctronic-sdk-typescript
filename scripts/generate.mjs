@@ -8,7 +8,9 @@
 // regenerate from the pinned copy and diff against the committed files.
 //
 // Only operations that take the organization's API token are generated. Others, such as
-// browser-only operations, are listed and skipped.
+// browser-only operations, are listed and skipped. So is what only other credentials get on the
+// operations kept, such as embed session tokens' responses and request fields, and the components
+// only skipped parts use.
 //
 // The stream events (`x-doctronic-event-schema`) and the webhooks (`webhooks`) are required: a
 // contract without them fails the run and writes nothing, rather than drop their types.
@@ -137,7 +139,7 @@ ${names}
 async function main() {
   const { values } = parseArgs({ options: { contract: { type: 'string' } } });
   const source = values.contract ?? relative(process.cwd(), PINNED_CONTRACT);
-  const { contract, skipped } = sdkContract(await loadContract(source));
+  const { contract, skipped, trimmed } = sdkContract(await loadContract(source));
 
   // Read everything first, so a contract that lacks a part writes nothing.
   const operations = describeOperations(contract);
@@ -158,6 +160,22 @@ async function main() {
   if (skipped.length) {
     console.log(
       `Skipped ${skipped.length} that don't take the organization's API token: ${skipped.join(', ')}.`,
+    );
+  }
+  const left = [
+    ['security alternatives on', trimmed.alternatives.length, 'operation'],
+    ['', trimmed.responses.length, 'response'],
+    ['', trimmed.fields.length, 'request field'],
+    ['prose in', trimmed.descriptions.length, 'description'],
+    ['', trimmed.components.length, 'component'],
+  ]
+    .filter(([, count]) => count > 0)
+    .map(
+      ([lead, count, noun]) => `${lead ? `${lead} ` : ''}${count} ${noun}${count === 1 ? '' : 's'}`,
+    );
+  if (left.length) {
+    console.log(
+      `Left out what only other credentials or skipped operations use: ${left.join(', ')}.`,
     );
   }
 }
