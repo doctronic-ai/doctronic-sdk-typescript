@@ -412,7 +412,7 @@ export class Doctronic {
     }
     const fetchImpl = options.fetch ?? globalThis.fetch;
     if (typeof fetchImpl !== 'function') {
-      throw new DoctronicError('No `fetch` available. Use Node 20 or later, or pass `fetch`.');
+      throw new DoctronicError('No `fetch` available. Use Node 22 or later, or pass `fetch`.');
     }
 
     this.environment = environment as Environment;

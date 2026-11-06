@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- The SDK needs Node 22 or later. Node 20 reached end of life in April 2026. `engines` is `>=22`,
+  and CI tests Node 22, 24, and 26. Stay on 0.2.x if you need Node 20.
+
 ## 0.2.0 (2026-11-03)
 
 A minor release. The stream event and webhook payload types are generated from the contract, and

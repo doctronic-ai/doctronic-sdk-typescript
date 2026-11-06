@@ -11,7 +11,7 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Set up
 
-You need Node 20 or later. CI tests Node 20, 22, 24, and 26.
+You need Node 22.18 or later, which the build tool (tsup) requires. CI tests Node 22, 24, and 26.
 
 ```bash
 npm ci

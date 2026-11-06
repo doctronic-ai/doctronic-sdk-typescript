@@ -22,7 +22,7 @@ jobs:
       matrix:
         # Each even-numbered Node line from the `engines` minimum up. See "Supported Node versions" in
         # the README. The main ruleset requires each of these checks by name.
-        node: [20, 22, 24, 26]
+        node: [22, 24, 26]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

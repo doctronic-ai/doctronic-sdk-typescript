@@ -3,7 +3,7 @@
 Call the Doctronic API from your Node backend: create users, stream consultations, book
 appointments, retrieve consultation documents, and verify webhooks.
 
-Requires Node 20 or later; see [Supported Node versions](#supported-node-versions). ESM and
+Requires Node 22 or later; see [Supported Node versions](#supported-node-versions). ESM and
 CommonJS. No runtime dependencies. Using Python? See the
 [Doctronic Python SDK](https://github.com/doctronic-ai/doctronic-sdk-python).
 
@@ -375,10 +375,10 @@ changes wait for a major release.
 
 ## Supported Node versions
 
-CI tests every even-numbered Node line from 20 up: 20, 22, 24, and 26. `engines` stays `>=20`
-through 0.1.x. Node 20 reached end of life in April 2026, so a later minor release may raise the
-minimum to Node 22; the CHANGELOG says so when it does. A new Node line joins the CI matrix soon
-after its release.
+CI tests every even-numbered Node line from 22 up: 22, 24, and 26. `engines` is `>=22`. Node 20
+reached end of life in April 2026, and 0.2.x is the last release line that supports it. When a
+Node line reaches end of life, a later minor release raises the minimum and the CHANGELOG says so.
+A new Node line joins the CI matrix soon after its release.
 
 ## Support
 
