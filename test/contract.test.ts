@@ -1,5 +1,5 @@
 // The generator's reading of the contract (scripts/contract.mjs), on the pinned copy and on
-// variants of it built here.
+// variants of it built here, for both profiles: the server SDK and the browser package.
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,10 +9,14 @@ import { join } from 'node:path';
 import openapiTS, { astToString } from 'openapi-typescript';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import * as browserEvents from '../packages/browser/src/generated/events.js';
+import { operations as browserOperations } from '../packages/browser/src/generated/operations.js';
 import {
+  browserContract,
   describeOperations,
   describeStreamEvents,
   describeWebhooks,
+  EMBED_SESSION_SCHEME,
   EVENT_SCHEMA_EXTENSION,
   loadContract,
   PINNED_CONTRACT,
@@ -41,13 +45,11 @@ const describe_ = (contract: Contract): OperationDescription[] =>
   describeOperations(sdkContract(contract).contract);
 const byKey = (contract: Contract) => new Map(describe_(contract).map((op) => [op.key, op]));
 // The types, with the same options as scripts/generate.mjs.
-const generateSchema = async (contract: Contract): Promise<string> =>
-  astToString(
-    await openapiTS(sdkContract(contract).contract as never, {
-      defaultNonNullable: false,
-      silent: true,
-    }),
-  );
+const typesOf = async (contract: Contract): Promise<string> =>
+  astToString(await openapiTS(contract as never, { defaultNonNullable: false, silent: true }));
+const generateSchema = (contract: Contract) => typesOf(sdkContract(contract).contract);
+const generateBrowserSchema = (contract: Contract) => typesOf(browserContract(contract).contract);
+const committed = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 // The embed API's own markers in the contract: its paths, its session token's scheme, the
 // responses and request fields only that token gets, and its sentences in the chat operations'
@@ -72,14 +74,20 @@ const EMBED_PROSE: [string, string][] = [
     '',
   ],
 ];
-const SECURITY_FIELDS = ['security', 'x-doctronic-runtime-security'];
+const RUNTIME_SECURITY = 'x-doctronic-runtime-security';
+const SECURITY_FIELDS = ['security', RUNTIME_SECURITY];
 
-const componentRefsIn = (node: unknown): Set<string> =>
-  new Set(
-    [...JSON.stringify(node).matchAll(/"\$ref":"(#\/components\/[^"]+)"/g)].map(
-      (match) => match[1] as string,
-    ),
-  );
+// The `#/components/...` refs anywhere under `node`.
+function refsUnder(node: unknown, refs = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) node.forEach((child) => refsUnder(child, refs));
+  else if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === '$ref' && typeof value === 'string') refs.add(value);
+      else refsUnder(value, refs);
+    }
+  }
+  return refs;
+}
 
 // The operation keys under the embed API's paths, in the order sdkContract reports them.
 const embedOperations = (contract: Contract): string[] =>
@@ -96,7 +104,7 @@ const embedOperations = (contract: Contract): string[] =>
 // referenced go too: those something referenced before and nothing references now.
 function withoutEmbed(contract: Contract): Json {
   const next = copy(contract);
-  const referencedBefore = componentRefsIn(next);
+  const referencedBefore = refsUnder(next);
   for (const path of Object.keys(next.paths)) {
     if (path.startsWith(EMBED_PATH)) delete next.paths[path];
   }
@@ -131,7 +139,7 @@ function withoutEmbed(contract: Contract): Json {
     }
   }
   for (;;) {
-    const referenced = componentRefsIn(next);
+    const referenced = refsUnder(next);
     const unused = [...referencedBefore].filter(
       (ref) => !referenced.has(ref) && resolveRef(next, { $ref: ref }) !== undefined,
     );
@@ -176,6 +184,10 @@ describe('the pinned contract', () => {
   it('generates the committed operations', () => {
     const generated = Object.fromEntries(describe_(pinned).map(({ key, ...spec }) => [key, spec]));
     expect(generated).toEqual(operations);
+  });
+
+  it('generates the committed types', async () => {
+    expect(committed('src/generated/schema.ts').endsWith(await generateSchema(pinned))).toBe(true);
   });
 
   // The embed API may or may not be published; anything else skipped is a new operation the SDK
@@ -367,12 +379,13 @@ describe('a contract with the embed API', () => {
       responses: keys.map((key) => `429 ${key}`),
       fields: ['CreateChatRequest.starterPromptIndex'],
       descriptions: ['GET /chats/{chatId}/', 'POST /chats/{chatId}/stream/'],
+      webhooks: [],
     });
     expect([...components].sort()).toEqual([...EMBED_COMPONENTS].sort());
     const paths = contract.paths as Json;
     for (const [path, method] of CHAT_OPERATIONS) {
       expect(paths[path][method].security).toEqual([{ HTTPBearer: [], XDoctronicUserID: [] }]);
-      expect(paths[path][method]['x-doctronic-runtime-security']).toEqual([
+      expect(paths[path][method][RUNTIME_SECURITY]).toEqual([
         { HTTPBearer: [], XDoctronicUserID: [] },
       ]);
     }
@@ -416,6 +429,164 @@ describe('a contract with the embed API', () => {
     expect(kept.Alias).toBeDefined();
     expect(kept.Target).toBeDefined();
     expect(trimmed.components).not.toContain('#/components/responses/Target');
+  });
+});
+
+// The embed API in the pinned contract, which the browser profile generates from.
+const PINNED_EMBED_OPERATIONS = [
+  'GET /embed/config/',
+  'POST /embed/sessions/',
+  'POST /embed/sessions/refresh/',
+  'GET /embed/chats/{chatId}/offramps/{kind}/',
+  'GET /embed/go/{ref}/',
+  'POST /embed/chats/{chatId}/rating/',
+  'PATCH /embed/chats/{chatId}/rating/',
+];
+// The embed bootstrap, which takes no credential at all.
+const PUBLIC_OPERATIONS = ['GET /embed/config/', 'POST /embed/sessions/', 'GET /embed/go/{ref}/'];
+const CHAT_KEYS = CHAT_OPERATIONS.map(([path, method]) => `${method.toUpperCase()} ${path}`);
+
+describe('the embed API in the pinned contract, for the server SDK', () => {
+  it('skips exactly the embed operations', () => {
+    expect(sdkContract(pinned).skipped).toEqual(PINNED_EMBED_OPERATIONS);
+  });
+
+  it('leaves out what only the embed session token gets', () => {
+    const { contract, trimmed } = sdkContract(pinned);
+    const { components, ...parts } = trimmed;
+    expect(parts).toEqual({
+      alternatives: CHAT_KEYS,
+      responses: CHAT_KEYS.map((key) => `429 ${key}`),
+      fields: ['CreateChatRequest.starterPromptIndex'],
+      descriptions: ['GET /chats/{chatId}/', 'POST /chats/{chatId}/stream/'],
+      webhooks: [],
+    });
+    // Only the embed operations used them.
+    expect(components.length).toBeGreaterThan(0);
+    const kept = refsUnder(contract);
+    for (const ref of components) expect(kept.has(ref)).toBe(false);
+    expect(components).toContain('#/components/schemas/EmbedSessionResponse');
+  });
+});
+
+describe('the browser profile', () => {
+  const BROWSER_OPERATIONS = [...CHAT_KEYS, ...PINNED_EMBED_OPERATIONS];
+
+  it('generates exactly the embed session and public operations', () => {
+    const { contract, skipped } = browserContract(pinned);
+    const described = describeOperations(contract, 'browser');
+    expect(described.map(({ key }) => key)).toEqual(BROWSER_OPERATIONS);
+    // Every other operation takes only the organization's token.
+    const serverOnly = describe_(pinned)
+      .map(({ key }) => key)
+      .filter((key) => !CHAT_KEYS.includes(key));
+    expect(skipped).toEqual(serverOnly);
+    expect(described.filter((op) => !op.sessionToken).map(({ key }) => key)).toEqual(
+      PUBLIC_OPERATIONS,
+    );
+    for (const op of described) expect(op).not.toHaveProperty('userScoped');
+  });
+
+  it('generates the committed operations, stream events, and types', async () => {
+    const { contract } = browserContract(pinned);
+    const generated = Object.fromEntries(
+      describeOperations(contract, 'browser').map(({ key, ...spec }) => [key, spec]),
+    );
+    expect(generated).toEqual(browserOperations);
+    const { operations: streams, events } = describeStreamEvents(contract, 'browser');
+    expect(streams).toEqual(['POST /chats/{chatId}/stream/']);
+    expect(Object.fromEntries(events.map(({ type, fields }) => [type, fields]))).toEqual(
+      browserEvents.streamEventFields,
+    );
+    const schema = committed('packages/browser/src/generated/schema.ts');
+    expect(schema.endsWith(await generateBrowserSchema(pinned))).toBe(true);
+  });
+
+  it('keeps only the embed session token on the chat operations', () => {
+    const paths = browserContract(pinned).contract.paths as Json;
+    for (const [path, method] of CHAT_OPERATIONS) {
+      expect(paths[path][method].security).toEqual([{ [EMBED_SESSION_SCHEME]: [] }]);
+      expect(paths[path][method][RUNTIME_SECURITY]).toEqual([{ [EMBED_SESSION_SCHEME]: [] }]);
+    }
+    for (const key of PUBLIC_OPERATIONS) {
+      const [method, path] = key.split(' ') as [string, string];
+      expect(paths[path][method.toLowerCase()].security).toEqual([]);
+    }
+  });
+
+  it('has no webhooks', async () => {
+    const { contract, trimmed } = browserContract(pinned);
+    expect(contract.webhooks).toBeUndefined();
+    expect(trimmed.webhooks).toEqual(describeWebhooks(pinned).map(({ event }) => event));
+    expect(await generateBrowserSchema(pinned)).toContain(
+      'export type webhooks = Record<string, never>;',
+    );
+    expect(Object.keys(browserEvents)).toEqual(['streamEventFields']);
+  });
+
+  it('keeps only the components its operations reach', () => {
+    const next = copy(pinned);
+    next.components.schemas.Unreferenced = { type: 'string' };
+    const { contract, trimmed } = browserContract(next);
+    const components = contract.components as Json;
+    const defined = Object.entries(components)
+      .filter(([type]) => type !== 'securitySchemes')
+      .flatMap(([type, entries]) =>
+        Object.keys(entries as Json).map((name) => `#/components/${type}/${name}`),
+      );
+    // Everything the paths reach, directly or through other components.
+    const reached = refsUnder(contract.paths);
+    for (const ref of reached) refsUnder(resolveRef(contract, { $ref: ref }), reached);
+    expect(new Set(defined)).toEqual(reached);
+    expect(Object.keys(components.securitySchemes as Json)).toEqual([EMBED_SESSION_SCHEME]);
+    for (const name of ['Unreferenced', 'CreateUserRequest', 'ArtifactReadyPayload']) {
+      expect(trimmed.components).toContain(`#/components/schemas/${name}`);
+    }
+    expect(components.schemas.EmbedSessionResponse).toBeDefined();
+  });
+
+  it('is deterministic and leaves its input alone', async () => {
+    const before = structuredClone(pinned);
+    expect(browserContract(pinned)).toEqual(browserContract(pinned));
+    expect(await generateBrowserSchema(pinned)).toBe(await generateBrowserSchema(pinned));
+    expect(pinned).toEqual(before);
+  });
+
+  it('keeps any public operation, and leaves out other credentials', () => {
+    const { skipped } = browserContract(withSessionOperations(pinned));
+    const keys = describeOperations(
+      browserContract(withSessionOperations(pinned)).contract,
+      'browser',
+    ).map(({ key }) => key);
+    expect(keys).toContain('GET /session/config/');
+    expect(skipped).toContain('POST /session/refresh/');
+    expect(skipped).toContain('DELETE /chats/');
+    expect(keys).not.toContain('OPTIONS /chats/');
+  });
+
+  it('keeps the anonymous alternative of an operation where a credential is optional', () => {
+    const next = copy(pinned);
+    next.paths['/embed/config/'].get.security = [{}, { HTTPBearer: [] }];
+    next.paths['/embed/chats/{chatId}/rating/'].post.security = [{}, { EmbedSessionToken: [] }];
+    const { contract } = browserContract(next);
+    const paths = contract.paths as Json;
+    expect(paths['/embed/config/'].get.security).toEqual([{}]);
+    expect(paths['/embed/chats/{chatId}/rating/'].post.security).toEqual([
+      {},
+      { EmbedSessionToken: [] },
+    ]);
+    const described = new Map(describeOperations(contract, 'browser').map((op) => [op.key, op]));
+    expect(described.get('GET /embed/config/')?.sessionToken).toBe(false);
+    expect(described.get('POST /embed/chats/{chatId}/rating/')?.sessionToken).toBe(true);
+  });
+
+  it(`fails without the ${EMBED_SESSION_SCHEME} scheme, and the server profile still works`, () => {
+    const next = copy(pinned);
+    delete next.components.securitySchemes[EMBED_SESSION_SCHEME];
+    expect(() => browserContract(next)).toThrow(
+      `The contract has no ${EMBED_SESSION_SCHEME} security scheme, so the browser types can't be generated.`,
+    );
+    expect(describe_(next)).toEqual(describe_(pinned));
   });
 });
 
@@ -581,18 +752,20 @@ describe('webhooks', () => {
 
 describe('npm run generate', () => {
   const script = new URL('../scripts/generate.mjs', import.meta.url).pathname;
-  const generated = ['schema.ts', 'operations.ts', 'events.ts'].map(
-    (name) => new URL(`../src/generated/${name}`, import.meta.url),
+  const generated = ['src/generated', 'packages/browser/src/generated'].flatMap((dir) =>
+    ['schema.ts', 'operations.ts', 'events.ts'].map(
+      (name) => new URL(`../${dir}/${name}`, import.meta.url),
+    ),
   );
   const outputs = () => generated.map((file) => readFileSync(file, 'utf8'));
 
   // Runs the generator on `contract` and returns what it printed to stderr. It must fail.
-  function failedRun(contract: Json): string {
+  function failedRun(contract: Json, args: string[] = []): string {
     const dir = mkdtempSync(join(tmpdir(), 'doctronic-contract-'));
     try {
       const path = join(dir, 'contract.json');
       writeFileSync(path, JSON.stringify(contract));
-      execFileSync(process.execPath, [script, '--contract', path], { stdio: 'pipe' });
+      execFileSync(process.execPath, [script, '--contract', path, ...args], { stdio: 'pipe' });
     } catch (error) {
       expect((error as { status?: number }).status).toBe(1);
       return String((error as { stderr?: Buffer }).stderr);
@@ -602,7 +775,7 @@ describe('npm run generate', () => {
     throw new Error('npm run generate succeeded');
   }
 
-  it('fails, and writes nothing, without the stream events or the webhooks', () => {
+  it('fails, and writes nothing for either package, without the stream events or the webhooks', () => {
     const before = outputs();
 
     const noEvents = copy(pinned);
@@ -616,5 +789,21 @@ describe('npm run generate', () => {
     expect(failedRun(noWebhooks)).toMatch(/The contract has no webhooks/);
 
     expect(outputs()).toEqual(before);
+  });
+
+  it(`fails, and writes nothing for either package, without the ${EMBED_SESSION_SCHEME} scheme`, () => {
+    const before = outputs();
+    const noEmbed = copy(pinned);
+    delete noEmbed.components.securitySchemes[EMBED_SESSION_SCHEME];
+    for (const args of [[], ['--profile', 'all'], ['--profile', 'browser']]) {
+      expect(failedRun(noEmbed, args)).toMatch(/no EmbedSessionToken security scheme/);
+    }
+    expect(outputs()).toEqual(before);
+  });
+
+  it('fails on an unknown profile', () => {
+    expect(failedRun(copy(pinned), ['--profile', 'mobile'])).toMatch(
+      /--profile must be one of server, browser, all/,
+    );
   });
 });

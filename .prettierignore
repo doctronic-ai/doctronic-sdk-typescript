@@ -3,4 +3,5 @@ coverage/
 node_modules/
 openapi/
 src/generated/
+packages/browser/src/generated/
 package-lock.json

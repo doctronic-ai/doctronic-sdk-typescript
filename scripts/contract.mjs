@@ -14,6 +14,8 @@ export const PUBLISHED_CONTRACT_URL = 'https://docs.doctronic.ai/openapi/doctron
 
 /** The security scheme for the organization's API token. The SDK sends it on every request. */
 export const ORG_TOKEN_SCHEME = 'HTTPBearer';
+/** The security scheme for embed session tokens, which the browser sends instead. */
+export const EMBED_SESSION_SCHEME = 'EmbedSessionToken';
 /** A response-level extension on `409`: the error codes safe to retry with the same key. */
 export const RETRYABLE_CODES_EXTENSION = 'x-doctronic-retryable-codes';
 /** A media-type extension on `text/event-stream`: the schema of each event's JSON `data`. */
@@ -55,10 +57,64 @@ export function resolveRef(contract, value) {
   return resolveRef(contract, lookupRef(contract, value.$ref));
 }
 
-// The operation's security requirements that include the organization's token.
-function orgRequirements(contract, operation) {
-  const security = operation.security ?? contract.security ?? [];
-  return security.filter((requirement) => Object.hasOwn(requirement ?? {}, ORG_TOKEN_SCHEME));
+/**
+ * What each package generates from the contract:
+ *
+ * - `server`, the SDK in `src/generated/`: operations that take the organization's token, and the
+ *   webhooks.
+ * - `browser`, `packages/browser/src/generated/`: operations that take an embed session token, and
+ *   the public ones that take no credential at all, such as the embed bootstrap. No webhooks: the
+ *   browser never receives them.
+ *
+ * On the operations kept, each profile keeps only the security alternatives with its own scheme.
+ */
+const PROFILES = {
+  server: {
+    scheme: ORG_TOKEN_SCHEME,
+    public: false,
+    webhooks: true,
+    // The server SDK's hand-written types may use any component the contract defines, so the
+    // ones nothing references stay.
+    keepUnreferenced: true,
+    trimEmbedOnly: true,
+    missingScheme: `The contract has no ${ORG_TOKEN_SCHEME} security scheme.`,
+  },
+  browser: {
+    scheme: EMBED_SESSION_SCHEME,
+    public: true,
+    webhooks: false,
+    keepUnreferenced: false,
+    trimEmbedOnly: false,
+    missingScheme:
+      `The contract has no ${EMBED_SESSION_SCHEME} security scheme, so the browser types can't ` +
+      'be generated. Pin a contract that publishes the embed API.',
+  },
+};
+/** The profile names, in the order `npm run generate` writes them. */
+export const PROFILE_NAMES = Object.keys(PROFILES);
+
+function profileOf(name) {
+  if (!Object.hasOwn(PROFILES, name)) {
+    throw new Error(`Unknown profile ${JSON.stringify(name)}: use ${PROFILE_NAMES.join(', ')}.`);
+  }
+  return PROFILES[name];
+}
+
+const securityOf = (contract, operation) => operation.security ?? contract.security ?? [];
+const takesScheme = (requirement, scheme) => Object.hasOwn(requirement ?? {}, scheme);
+// An empty requirement, `{}`, lets anyone call the operation; so does an empty `security`.
+const isAnonymous = (requirement) => Object.keys(requirement ?? {}).length === 0;
+
+// Whether a security alternative is one the profile keeps: its own scheme, or no credential when
+// the profile covers public operations.
+const keepsRequirement = (requirement, profile) =>
+  takesScheme(requirement, profile.scheme) || (profile.public && isAnonymous(requirement));
+
+// Whether the profile generates the operation.
+function inProfile(contract, operation, profile) {
+  const security = securityOf(contract, operation);
+  if (security.some((requirement) => keepsRequirement(requirement, profile))) return true;
+  return profile.public && security.length === 0;
 }
 
 // The extension that lists an operation's security as the server checks it at runtime, next to
@@ -126,18 +182,17 @@ function allComponents(contract) {
   );
 }
 
-// Removes, in place, what only other credentials get from an operation the SDK keeps. Records
-// each removal in `trimmed` under the operation's key.
-function trimOperation(contract, key, operation, trimmed) {
+// Removes, in place, what only other credentials get from an operation the profile keeps.
+// Records each removal in `trimmed` under the operation's key.
+function trimOperation(contract, key, operation, trimmed, profile) {
   for (const field of ['security', RUNTIME_SECURITY_EXTENSION]) {
     if (!Array.isArray(operation[field])) continue;
-    const kept = operation[field].filter((requirement) =>
-      Object.hasOwn(requirement ?? {}, ORG_TOKEN_SCHEME),
-    );
+    const kept = operation[field].filter((requirement) => keepsRequirement(requirement, profile));
     if (kept.length === operation[field].length) continue;
     operation[field] = kept;
     if (!trimmed.alternatives.includes(key)) trimmed.alternatives.push(key);
   }
+  if (!profile.trimEmbedOnly) return;
   for (const [status, response] of Object.entries(operation.responses ?? {})) {
     if (EMBED_ONLY.response.test(resolveRef(contract, response)?.description ?? '')) {
       delete operation.responses[status];
@@ -168,20 +223,45 @@ function trimOperation(contract, key, operation, trimmed) {
  * parts it left out (`trimmed`). With nothing to leave out, it returns the contract unchanged.
  */
 export function sdkContract(contract) {
-  if (!Object.hasOwn(contract.components?.securitySchemes ?? {}, ORG_TOKEN_SCHEME)) {
-    throw new Error(`The contract has no ${ORG_TOKEN_SCHEME} security scheme.`);
+  return profileContract(contract, 'server');
+}
+
+/**
+ * The part of the contract the browser package covers: every operation that takes an embed
+ * session token, and every public one. On the chat operations that also take the organization's
+ * token, only the embed session token's alternative stays. The webhooks are left out, and so is
+ * every component the operations kept don't reach.
+ *
+ * Returns the same shape as {@link sdkContract}. Throws when the contract has no embed session
+ * token scheme, as the published contract has until the embed API launches.
+ */
+export function browserContract(contract) {
+  return profileContract(contract, 'browser');
+}
+
+function profileContract(contract, name) {
+  const profile = profileOf(name);
+  if (!Object.hasOwn(contract.components?.securitySchemes ?? {}, profile.scheme)) {
+    throw new Error(profile.missingScheme);
   }
   const next = structuredClone(contract);
   const paths = {};
   const skipped = [];
-  const trimmed = { alternatives: [], responses: [], fields: [], descriptions: [], components: [] };
+  const trimmed = {
+    alternatives: [],
+    responses: [],
+    fields: [],
+    descriptions: [],
+    webhooks: [],
+    components: [],
+  };
   for (const [path, rawItem] of Object.entries(next.paths ?? {})) {
     const item = resolveRef(next, rawItem);
     const present = ALL_METHODS.filter((method) => item[method]);
-    const skip = present.filter((method) => orgRequirements(next, item[method]).length === 0);
+    const skip = present.filter((method) => !inProfile(next, item[method], profile));
     skipped.push(...skip.map((method) => `${method.toUpperCase()} ${path}`));
     for (const method of present.filter((method) => !skip.includes(method))) {
-      trimOperation(next, `${method.toUpperCase()} ${path}`, item[method], trimmed);
+      trimOperation(next, `${method.toUpperCase()} ${path}`, item[method], trimmed, profile);
     }
     if (skip.length === 0) paths[path] = rawItem;
     else if (present.length > skip.length) {
@@ -190,7 +270,14 @@ export function sdkContract(contract) {
   }
   next.paths = paths;
 
-  for (const [component, fields] of Object.entries(EMBED_ONLY.fields)) {
+  if (!profile.webhooks && next.webhooks) {
+    trimmed.webhooks.push(...Object.keys(next.webhooks));
+    delete next.webhooks;
+  }
+
+  for (const [component, fields] of Object.entries(
+    profile.trimEmbedOnly ? EMBED_ONLY.fields : {},
+  )) {
     const schema = next.components?.schemas?.[component];
     for (const field of fields) {
       if (!Object.hasOwn(schema?.properties ?? {}, field)) continue;
@@ -202,13 +289,23 @@ export function sdkContract(contract) {
     }
   }
 
-  // A component that nothing referenced before stays, and so does every component it references.
+  // The server profile keeps a component that nothing referenced before, and every component it
+  // references. The browser profile keeps only what its operations reach, and the security
+  // schemes they name.
   const reachableBefore = reachableComponents(contract);
   const unreferenced = allComponents(contract).filter((ref) => !reachableBefore.has(ref));
-  const reachable = reachableComponents(next, unreferenced);
-  for (const ref of reachableBefore) {
-    if (reachable.has(ref)) continue;
+  const reachable = reachableComponents(next, profile.keepUnreferenced ? unreferenced : []);
+  const schemes = new Set(
+    Object.values(next.paths).flatMap((rawItem) => {
+      const item = resolveRef(next, rawItem);
+      return ALL_METHODS.flatMap((method) =>
+        item[method] ? securityOf(next, item[method]).flatMap(Object.keys) : [],
+      );
+    }),
+  );
+  for (const ref of profile.keepUnreferenced ? reachableBefore : allComponents(contract)) {
     const [, , type, name] = ref.split('/');
+    if (reachable.has(ref) || (type === 'securitySchemes' && schemes.has(name))) continue;
     delete next.components[type][name];
     trimmed.components.push(ref);
   }
@@ -249,10 +346,15 @@ function successDataRequired(contract, responses) {
 
 /**
  * The runtime facts the client needs about each operation. Types alone can't carry these. Pass
- * the contract from {@link sdkContract}; operations without the organization's token are skipped
- * here too.
+ * the contract from {@link sdkContract} or {@link browserContract}, with the same profile;
+ * operations outside the profile are skipped here too.
+ *
+ * The server profile says which operations need `X-Doctronic-User-ID` (`userScoped`); the
+ * browser never sends it, so its profile says which ones take the embed session token
+ * (`sessionToken`) rather than no credential.
  */
-export function describeOperations(contract) {
+export function describeOperations(contract, profileName = 'server') {
+  const profile = profileOf(profileName);
   const userIdSchemes = new Set(
     Object.entries(contract.components?.securitySchemes ?? {})
       .filter(([, scheme]) => {
@@ -268,8 +370,10 @@ export function describeOperations(contract) {
     for (const method of METHODS) {
       const operation = item[method];
       if (!operation) continue;
-      const security = orgRequirements(contract, operation);
-      if (security.length === 0) continue;
+      if (!inProfile(contract, operation, profile)) continue;
+      const security = securityOf(contract, operation).filter((requirement) =>
+        takesScheme(requirement, profile.scheme),
+      );
       const key = `${method.toUpperCase()} ${path}`;
       const parameters = [...(item.parameters ?? []), ...(operation.parameters ?? [])].map((p) =>
         resolveRef(contract, p),
@@ -284,9 +388,13 @@ export function describeOperations(contract) {
         idempotent: parameters.some(
           (p) => p.in === 'header' && p.name.toLowerCase() === 'idempotency-key',
         ),
-        userScoped: security.some((requirement) =>
-          Object.keys(requirement).some((name) => userIdSchemes.has(name)),
-        ),
+        ...(profile === PROFILES.server
+          ? {
+              userScoped: security.some((requirement) =>
+                Object.keys(requirement).some((scheme) => userIdSchemes.has(scheme)),
+              ),
+            }
+          : { sessionToken: security.length > 0 }),
         stream: Object.values(responses).some(
           (response) => resolveRef(contract, response)?.content?.['text/event-stream'],
         ),
@@ -341,14 +449,14 @@ function jsonTypes(contract, schema, where) {
   return [...types].sort();
 }
 
-// The `text/event-stream` media types of the SDK's operations, with the operation's key.
-function eventStreams(contract) {
+// The `text/event-stream` media types of the profile's operations, with the operation's key.
+function eventStreams(contract, profile) {
   const streams = [];
   for (const [path, rawItem] of Object.entries(contract.paths ?? {})) {
     const item = resolveRef(contract, rawItem);
     for (const method of METHODS) {
       const operation = item[method];
-      if (!operation || orgRequirements(contract, operation).length === 0) continue;
+      if (!operation || !inProfile(contract, operation, profile)) continue;
       for (const response of Object.values(operation.responses ?? {})) {
         const media = resolveRef(contract, response)?.content?.['text/event-stream'];
         if (media) streams.push({ key: `${method.toUpperCase()} ${path}`, media });
@@ -362,13 +470,14 @@ function eventStreams(contract) {
  * The stream events, from `x-doctronic-event-schema` on each streaming operation's
  * `text/event-stream` response. It must name one union of the events, discriminated on a property
  * with a mapping. For each event: its discriminator value, its component, and the fields it always
- * carries other than the discriminator (its `required`), with the JSON types each can have.
+ * carries other than the discriminator (its `required`), with the JSON types each can have. Pass
+ * the profile's contract and the profile's name, as for {@link describeOperations}.
  *
- * Throws when the contract doesn't describe the events, so the SDK is never generated without
+ * Throws when the contract doesn't describe the events, so neither package is generated without
  * them.
  */
-export function describeStreamEvents(contract) {
-  const streams = eventStreams(contract);
+export function describeStreamEvents(contract, profileName = 'server') {
+  const streams = eventStreams(contract, profileOf(profileName));
   if (streams.length === 0) {
     throw new Error('The contract has no operation that responds with text/event-stream.');
   }
@@ -436,7 +545,7 @@ export function describeStreamEvents(contract) {
  * ({@link WEBHOOK_ENVELOPE_FIELDS}), with `event` the constant event name.
  *
  * Throws when the contract doesn't describe the webhooks, so the SDK is never generated without
- * them.
+ * them. Only the server profile has webhooks.
  */
 export function describeWebhooks(contract) {
   const webhooks = contract.webhooks;

@@ -48,14 +48,36 @@ the contract or the generator instead. CI regenerates it and fails on any differ
   contract without either fails `npm run generate`, which then writes nothing.
 
 `npm run generate` reads `openapi/doctronic-v1.json`, a pinned copy of the contract the docs
-publish at https://docs.doctronic.ai/openapi/doctronic-v1.json. It generates only operations that
-take the organization's API token, and lists the ones it skips, such as browser-only operations.
+publish at https://docs.doctronic.ai/openapi/doctronic-v1.json. For the SDK, it generates only
+operations that take the organization's API token, and lists the ones it skips, such as
+browser-only operations.
 On the operations it keeps, it also leaves out what only another credential gets, such as the
 responses and request fields the contract documents for embed session tokens only, and the
 components that only skipped parts use. So the generated code is the same whether or not the
 contract includes the embed API.
 The generator is `scripts/generate.mjs`, and its reading of the contract is in
 `scripts/contract.mjs`, with tests in `test/contract.test.ts`.
+
+### The browser package
+
+The repository is also an npm workspace with one more package, `@doctronic-ai/browser` in
+`packages/browser/`, for partners that call the API from the browser with a publishable key. It
+isn't published yet. `npm run generate` writes its `packages/browser/src/generated/` from the same
+pinned contract, with the same three files:
+
+- The operations that take an embed session token, and the public ones that take no credential,
+  such as the embed bootstrap (`GET /embed/config/`, `POST /embed/sessions/`). On the chat
+  operations, which also take the organization's token, only the embed session token's
+  alternative stays: the browser never sends the organization's token or `X-Doctronic-User-ID`.
+  `operations.ts` says which operations take the session token (`sessionToken`) instead of which
+  are user-scoped.
+- Only the components those operations reach.
+- The stream events, but no webhooks: the browser never receives them.
+
+A contract without the embed session token scheme fails `npm run generate`, which then writes
+nothing for either package. Pass `--profile server` or `--profile browser` to generate one
+package only. The root `npm run lint`, `npm run typecheck`, and `npm test` cover the browser
+package too; the package has its own `tsconfig.json`, with the DOM's types and not Node's.
 
 To pick up a new contract by hand:
 

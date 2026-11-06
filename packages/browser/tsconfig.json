@@ -1,0 +1,11 @@
+{
+  // The root options, for the browser: DOM instead of Node's types.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "paths": {}
+  },
+  "include": ["src"],
+  "exclude": []
+}
