@@ -1,9 +1,8 @@
 # Changelog
 
-## 0.1.0 (Unreleased)
+## Unreleased
 
-The first version: a headless browser client for partners that use a publishable key. Not
-published yet.
+The first version: a headless browser client for partners that use a publishable key.
 
 ### Client
 

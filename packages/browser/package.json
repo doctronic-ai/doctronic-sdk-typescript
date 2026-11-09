@@ -1,8 +1,20 @@
 {
   "name": "@doctronic-ai/browser",
   "version": "0.0.0",
-  "private": true,
   "description": "Browser client for the Doctronic embed API, for partners using a publishable key",
+  "keywords": [
+    "doctronic",
+    "healthcare",
+    "telehealth",
+    "telemedicine",
+    "ai",
+    "api",
+    "sdk",
+    "client",
+    "browser",
+    "embed",
+    "typescript"
+  ],
   "author": "Doctronic",
   "license": "MIT",
   "repository": {
@@ -31,6 +43,9 @@
     "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
