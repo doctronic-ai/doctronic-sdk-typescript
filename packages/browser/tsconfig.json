@@ -6,6 +6,7 @@
     "types": [],
     "paths": {}
   },
-  "include": ["src"],
-  "exclude": []
+  "include": ["src", "test", "*.config.ts"],
+  // The consumer fixture compiles against the packed tarball. scripts/check-package.mjs checks it.
+  "exclude": ["test/consumer"]
 }

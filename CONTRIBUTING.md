@@ -78,6 +78,10 @@ A contract without the embed session token scheme fails `npm run generate`, whic
 nothing for either package. Pass `--profile server` or `--profile browser` to generate one
 package only. The root `npm run lint`, `npm run typecheck`, and `npm test` cover the browser
 package too; the package has its own `tsconfig.json`, with the DOM's types and not Node's.
+In `packages/browser/`, `npm run build` builds it and `npm run check:package` checks its tarball:
+it installs it outside the workspace, type-checks it under bundler and NodeNext resolution without
+Node's types, imports it with no `window` or `document`, and fails on a dependency, a Node
+built-in, React, or a reference to another Doctronic package.
 
 To pick up a new contract by hand:
 

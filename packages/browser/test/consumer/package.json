@@ -1,0 +1,6 @@
+{
+  "name": "doctronic-browser-consumer",
+  "private": true,
+  "type": "module",
+  "description": "A consumer of the packed browser tarball. scripts/check-package.mjs copies it to a temporary directory and installs the package there."
+}
