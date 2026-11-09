@@ -19,7 +19,7 @@ function matches(pattern: string, tag: string): boolean {
     .map((part) =>
       part
         .split('*')
-        .map((text) => text.replace(/[.]/g, '\\.'))
+        .map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         .join('[^/]*'),
     )
     .join('.*');
